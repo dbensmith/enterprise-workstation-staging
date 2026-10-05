@@ -1,0 +1,40 @@
+# Staging & build artifacts
+HP_Staging/
+IsoBuild/
+*.iso
+*.wim
+*.esd
+*.swm
+
+# Logs and transcripts
+*.log
+firstboot.log
+
+# PowerShell
+*.ps1xml
+*~
+
+# OS artifacts
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Secrets and run-time config (never commit)
+site.psd1
+*.local.psd1
+config/local/
+secrets/
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+
+# Installers, firmware and password files
+*.msi
+*.bin
+*.sig
+HPQPswd*.bin
+
+# Results from provisioned laptops (serials, customer data)
+results/
