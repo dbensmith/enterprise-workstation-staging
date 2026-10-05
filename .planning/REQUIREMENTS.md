@@ -136,12 +136,75 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| REPO-01 | Phase 1 | Pending |
+| REPO-02 | Phase 1 | Pending |
+| REPO-03 | Phase 1 | Pending |
+| REPO-04 | Phase 1 | Pending |
+| REPO-05 | Phase 1 | Pending |
+| REPO-06 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Pending |
+| SEC-02 | Phase 1 | Pending |
+| SEC-03 | Phase 1 | Pending |
+| BUILD-01 | Phase 2 | Pending |
+| BUILD-02 | Phase 4 | Pending |
+| BUILD-03 | Phase 4 | Pending |
+| BUILD-04 | Phase 4 | Pending |
+| BUILD-05 | Phase 4 | Pending |
+| BUILD-06 | Phase 2 | Pending |
+| FW-01 | Phase 2 | Pending |
+| FW-02 | Phase 2 | Pending |
+| FW-03 | Phase 2 | Pending |
+| FW-04 | Phase 2 | Pending |
+| FW-05 | Phase 2 | Pending |
+| FW-06 | Phase 2 | Pending |
+| IMG-01 | Phase 4 | Pending |
+| IMG-02 | Phase 4 | Pending |
+| IMG-03 | Phase 4 | Pending |
+| IMG-04 | Phase 4 | Pending |
+| IMG-05 | Phase 5 | Pending |
+| IMG-06 | Phase 4 | Pending |
+| IMG-07 | Phase 4 | Pending |
+| IMG-08 | Phase 4 | Pending |
+| IMG-09 | Phase 7 | Pending |
+| PROV-01 | Phase 3 | Pending |
+| PROV-02 | Phase 3 | Pending |
+| PROV-03 | Phase 3 | Pending |
+| PROV-04 | Phase 5 | Pending |
+| PROV-05 | Phase 5 | Pending |
+| PROV-06 | Phase 5 | Pending |
+| PROV-07 | Phase 3 | Pending |
+| PROV-08 | Phase 5 | Pending |
+| ASSESS-01 | Phase 3 | Pending |
+| ASSESS-02 | Phase 3 | Pending |
+| ASSESS-03 | Phase 3 | Pending |
+| ASSESS-04 | Phase 3 | Pending |
+| LOGON-01 | Phase 5 | Pending |
+| LOGON-02 | Phase 5 | Pending |
+| LOGON-03 | Phase 5 | Pending |
+| LOGON-04 | Phase 5 | Pending |
+| LOGON-05 | Phase 5 | Pending |
+| LOGON-06 | Phase 5 | Pending |
+| LOGON-07 | Phase 5 | Pending |
+| VERIFY-01 | Phase 6 | Pending |
+| VERIFY-02 | Phase 6 | Pending |
+| VERIFY-03 | Phase 6 | Pending |
+| RES-01 | Phase 3 | Pending |
+| RES-02 | Phase 3 | Pending |
+| RES-03 | Phase 6 | Pending |
+| RES-04 | Phase 6 | Pending |
+| RES-05 | Phase 6 | Pending |
+| RES-06 | Phase 6 | Pending |
+| RES-07 | Phase 6 | Pending |
+| RES-08 | Phase 6 | Pending |
+| BOOT-01 | Phase 7 | Pending |
+| BOOT-02 | Phase 7 | Pending |
+| BOOT-03 | Phase 7 | Pending |
 
 **Coverage:**
 - v1 requirements: 63 total
-- Mapped to phases: 0
-- Unmapped: 63 ⚠️
+- Mapped to phases: 63
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-05*
-*Last updated: 2026-10-06 after adding IMG-08 (no firmware in image) and IMG-09 (combined G5+G6 image, v1 not MVP)*
+*Last updated: 2026-10-06 after roadmap creation (traceability mapped to 7 phases)*
