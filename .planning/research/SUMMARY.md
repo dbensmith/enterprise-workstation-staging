@@ -48,7 +48,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 
 ## Implications for Roadmap
 
-### Suggested Phase Structure (9 phases; 8-9 deferred to v2)
+### Suggested Phase Structure (9 phases; 8 deferred to v2; 9 is v1 but not MVP)
 
 1. **Phase 1: Foundation** — Repo skeleton, vendor interface, secret scan, runtime config, stick discovery, git hygiene. Research: None.
 
@@ -66,7 +66,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 
 8. **Phase 8 (v2+): Dell/Lenovo** — Deferred. Needs catalog research, hardware bench per vendor.
 
-9. **Phase 9 (v2+): G5+G6 Union** — Deferred. Research overlap; defer deployment until bench-proven.
+9. **Phase 9 (v1, not MVP): G5+G6 Union** — After per-model images are proven. Research overlap; deploy only once bench-proven.
 
 ### Research Flags
 

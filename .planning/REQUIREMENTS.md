@@ -40,13 +40,15 @@
 
 ### Image & Media
 
-- [ ] **IMG-01**: Builder produces a slipstreamed Windows 11 image with drivers injected per platform for G5 and G6
+- [ ] **IMG-01**: Builder produces a slipstreamed Windows 11 image per model (G5, G6) with that platform's drivers injected
 - [ ] **IMG-02**: Image runs unattended setup and pauses only at the network screen, where the operator types the Wi-Fi password
 - [ ] **IMG-03**: Image contains no Wi-Fi profile or key
 - [ ] **IMG-04**: Image launches the first-logon run automatically after the first sign-in
 - [ ] **IMG-05**: Local account `User` ends up with a blank password and is not forced to create a password at second logon
 - [ ] **IMG-06**: Builder writes the Install stick (bootable, split WIM for FAT32, per-model packs)
 - [ ] **IMG-07**: Install stick boots on a G5 and a G6 after a BIOS defaults reset with Secure Boot on
+- [ ] **IMG-08**: Image never carries or flashes firmware; first-boot runs skip firmware, and a Pester test fails if the generated answer file invokes a firmware install
+- [ ] **IMG-09**: One combined image works on both G5 and G6, using platform-ID driver selection (v1, not MVP: schedule after the per-model image is proven)
 
 ### Provisioning Engine
 
@@ -136,10 +138,10 @@
 |-------------|-------|--------|
 
 **Coverage:**
-- v1 requirements: 61 total
+- v1 requirements: 63 total
 - Mapped to phases: 0
-- Unmapped: 61 ⚠️
+- Unmapped: 63 ⚠️
 
 ---
 *Requirements defined: 2026-10-05*
-*Last updated: 2026-10-05 after initial definition*
+*Last updated: 2026-10-06 after adding IMG-08 (no firmware in image) and IMG-09 (combined G5+G6 image, v1 not MVP)*
