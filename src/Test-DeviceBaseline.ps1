@@ -272,14 +272,14 @@ foreach ($line in $lines) {
     }
 }
 
-# Save to the first USB drive if present (supports Removable and Fixed USB drives)
+# Save to the USB drive with the earliest drive letter (D: before E:) if present; supports Removable and Fixed USB drives
 $usbDiskNumbers = @(Get-Disk -ErrorAction SilentlyContinue | Where-Object BusType -eq 'USB' | Select-Object -ExpandProperty Number)
 $usb = Get-Volume -ErrorAction SilentlyContinue | Where-Object {
     $_.DriveLetter -and (
         $_.DriveType -eq 'Removable' -or
         ($usbDiskNumbers -contains (Get-Partition -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue).DiskNumber)
     )
-} | Select-Object -First 1
+} | Sort-Object DriveLetter | Select-Object -First 1
 
 if ($usb) {
     $dir = "$($usb.DriveLetter):\results"

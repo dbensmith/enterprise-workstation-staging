@@ -2,11 +2,11 @@
 
 ## What This Is
 
-A modular, vendor-neutral laptop provisioning toolkit built on this repo's existing HP tooling (driver baseline, ISO build, install, audit). One operator, working mostly from a phone, prepares used business laptops on site at vendor shops: assess before purchase, update firmware, run diagnostics, image, and verify, with results landing in a central store an Excel tracker can pull from.
+A modular, vendor-neutral laptop provisioning toolkit built on this repo's existing HP tooling (driver baseline, ISO build, install, audit). One operator, working mostly from a phone, prepares used business laptops on site at vendor shops: assess before purchase, update firmware, run diagnostics, image, and verify.
 
 ## Core Value
 
-An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result reaches the central store even when the shop's internet is unreliable.
+An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result saved to the Tools stick.
 
 ## Requirements
 
@@ -22,7 +22,7 @@ An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged lapto
 
 ### Active
 
-Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firmware update; (3) reset BIOS to defaults straight after; (4) boot USB UEFI diagnostics (latest version from the stick, not the older built-in) and run them; (5) image, with Wi-Fi password typed at Windows' setup network screen and never stored in the image; (6) first logon: offline steps (drivers, local account setup) → wait until confirmed online → Atera → verify last → upload results.
+Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firmware update; (3) reset BIOS to defaults straight after; (4) boot USB UEFI diagnostics (latest version from the stick, not the older built-in) and run them; (5) image, with Wi-Fi password typed at Windows' setup network screen and never stored in the image; (6) first logon: offline steps (drivers, local account setup) → wait until confirmed online → Atera → verify last.
 
 **Modular repo**
 - [ ] Shared code in a common area; vendor code in per-vendor modules behind one interface (list models, fetch vendor pack, build custom pack, fetch firmware, install drivers, install firmware)
@@ -53,16 +53,14 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 **Results**
 - [ ] Verify timestamps every result in ISO 8601 UTC (e.g. `2026-10-05T10:02:00Z`)
 - [ ] Results saved per serial to the Tools stick's `results` folder
-- [ ] Sync: every script run with internet MUST upload every result on the stick, for any laptop, newer than what the central store has (catches up laptops checked offline); SHOULD run in background if simple, don't overbuild
-- [ ] Central store must be pullable by the Excel tracker — needs proper research. Options: Microsoft Forms/Lists, OneDrive/SharePoint Excel via Microsoft Graph, Power Automate, files committed to a private repo, Airtable, cloud storage bucket, others. Compare on: no stored credentials on target laptops, works from PowerShell 5.1, cost, Excel (incl. mobile) pull/refresh, newest result per serial without duplicates, data exposed if a URL leaks
 
 **Secrets**
-- [ ] No credentials or customer-specific settings in the repo, including history (Atera MSI and download link, central-store IDs or tokens, etc.); supplied at run time via gitignored local config, the Tools stick, or parameters
+- [ ] No credentials or customer-specific settings in the repo, including history (Atera MSI and download link, etc.); supplied at run time via gitignored local config, the Tools stick, or parameters
 - [ ] Repo SHOULD include a secret-scan check (pre-commit or CI)
 
 ### Out of Scope
 
-- The Excel tracker workbook itself — operator builds and owns it; this project only provides the central store it pulls from
+- Any central online results store or sync — out of scope; results stay on the Tools stick
 - Dell and Lenovo driver/firmware modules in the first milestone — repo structure first, modules after research (low priority)
 - Automating the firmware flash and defaults reset before Windows — wish list, no milestone
 - Storing the Wi-Fi password in the image — typed by the operator at Windows' setup network screen
@@ -75,15 +73,14 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 - Operator prepares used business laptops on site at vendor shops, mostly from a phone, with two USB sticks
 - Targets now: HP EliteBook 840 G5 and 840 G6
 - Known incident: 2026-10-05, five units couldn't use the pre-Windows USB BIOS flash route because files were in the wrong folders
-- Vendor shop internet is unreliable; offline laptops must be caught up on later runs
 
 ## Constraints
 
 - **Runtime**: Windows PowerShell 5.1, admin rights, no module installs on the target laptop — target laptops are stock Windows
 - **Secrets**: nothing credential-like or customer-specific in the repo or its history — repo may be public or shared; secrets come in at run time
-- **Network**: unreliable internet — every online step needs graceful offline behavior and later catch-up
+- **Network**: unreliable internet — every online step needs graceful offline behavior
 - **Output**: green/yellow/red, easy to read; harmless exit codes are warnings, not failures — operator reads results on a phone
-- **Ordering**: assess → firmware → BIOS defaults → UEFI diagnostics → image → first logon (drivers → online → Atera → verify → upload) is mandatory
+- **Ordering**: assess → firmware → BIOS defaults → UEFI diagnostics → image → first logon (drivers → online → Atera → verify) is mandatory
 - **Timestamps**: ISO 8601 UTC for all results — avoids timezone conflicts across sites
 - **Hardware**: exactly two USB sticks (Tools and Install)
 
@@ -97,7 +94,7 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 | Stage BIOS in exact vendor flash-tool layout, plus Windows flash tool fallback | Five units failed on 2026-10-05 from wrong folder layout | — Pending |
 | Blank password for local account `User` | Avoids forced password creation at second logon; operator accepted the trade-off | — Pending |
 | Block Atera install until real online check passes | MSI prompts for a token when offline | — Pending |
-| Central results store chosen by research | Many viable options; compare on credentials, PS 5.1, cost, Excel pull, dedupe, leak exposure | — Pending |
+| No central online results store | Out of scope (2026-10-09); results stay as per-serial files on the Tools stick | Decided |
 | Secrets supplied at run time, never committed | No credentials in repo or history | — Pending |
 
 ## Evolution

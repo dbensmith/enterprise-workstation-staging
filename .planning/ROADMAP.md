@@ -2,7 +2,7 @@
 
 ## Overview
 
-The work starts from the existing HP 840 G6 baseline tooling. The repo is first restructured into a common module plus an HP vendor module, with secrets kept out of git. Next, the 2026-10-05 wrong-folder incident is fixed: BIOS images and UEFI diagnostics go onto the Tools stick in HP's exact layout, and that layout is proven on real hardware. With the Tools stick trusted, the read-only Assess mode gives the operator a pre-purchase check. The builder then produces per-model G5 and G6 images on the Install stick. Deploy and the first-logon run take a freshly imaged laptop through drivers, the online gate and Atera. Verify closes every run, and results sync to a central store that the Excel tracker pulls from. Phases 1-6 deliver the MVP (the core value). Phase 7 adds two v1 items that are not MVP: the GitHub web bootstrap and one combined G5+G6 image. Phase 7 is scheduled only after the per-model images and platform-ID driver selection are proven.
+The work starts from the existing HP 840 G6 baseline tooling. The repo is first restructured into a common module plus an HP vendor module, with secrets kept out of git. Next, the 2026-10-05 wrong-folder incident is fixed: BIOS images and UEFI diagnostics go onto the Tools stick in HP's exact layout, and that layout is proven on real hardware. With the Tools stick trusted, the read-only Assess mode gives the operator a pre-purchase check. The builder then produces per-model G5 and G6 images on the Install stick. Deploy and the first-logon run take a freshly imaged laptop through drivers, the online gate and Atera. Verify closes every run and saves its result to the Tools stick. Phases 1-6 deliver the MVP (the core value). Phase 7 adds two v1 items that are not MVP: the GitHub web bootstrap and one combined G5+G6 image. Phase 7 is scheduled only after the per-model images and platform-ID driver selection are proven.
 
 ## Phases
 
@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Read-Only Assess** - Provisioning script runs from the Tools stick and gives a pre-purchase verdict saved per serial, changing nothing
 - [ ] **Phase 4: Per-Model Image and Install Stick** - ISO selection, vendor or custom driver packs, unattended per-model G5 and G6 images on a bootable Install stick, no firmware in the image
 - [ ] **Phase 5: Deploy and First Logon** - Deploy enforces the stage order; first logon runs drivers, the online gate and Atera, resumable across reboots
-- [ ] **Phase 6: Verify and Results Sync** - Verify runs last, and every result on the stick reaches a central store the Excel tracker pulls from, without duplicates
+- [ ] **Phase 6: Verify** - Verify runs last on every laptop and saves its result to the Tools stick
 - [ ] **Phase 7: Web Bootstrap and Combined Image** - Short GitHub bootstrap from a tagged release with offline fallback, plus one image for both G5 and G6 (v1, not MVP)
 
 ## Phase Details
@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Pester 5+ passes on Windows PowerShell 5.1, and PSScriptAnalyzer reports zero findings with no suppressions
   3. Profiles for the 840 G5 and 840 G6 load with platform ID, expected BIOS defaults, firmware minimum and pack selection data, and build output for each model lands in its own vendor/model folder
   4. A gitleaks scan of the full history is clean, and a commit containing a planted fake token is blocked by the pre-commit hook or CI check
-  5. The operator supplies Atera and store settings by copying the committed `.example` config, and git treats the filled-in copy as ignored
+  5. The operator supplies Atera settings by copying the committed `.example` config, and git treats the filled-in copy as ignored
 **Plans**: TBD
 
 ### Phase 2: Tools Stick Firmware Staging
@@ -81,15 +81,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. When first logon finishes, autologon is removed, and at the second sign-in `User` has a blank password and is not asked to create one
 **Plans**: TBD
 
-### Phase 6: Verify and Results Sync
-**Goal**: Every laptop's run ends with Verify. Every result on the Tools stick, including from laptops checked offline, reaches a central store the Excel tracker pulls from, with no duplicates and no read credential on any laptop
+### Phase 6: Verify
+**Goal**: Every laptop's run ends with Verify, and its result is saved to the Tools stick
 **Depends on**: Phase 5
-**Requirements**: VERIFY-01, VERIFY-02, VERIFY-03, RES-03, RES-04, RES-05, RES-06, RES-07, RES-08
+**Requirements**: VERIFY-01, VERIFY-02, VERIFY-03
 **Success Criteria** (what must be TRUE):
-  1. Verify always runs last, after Atera and before upload. It reports firmware currency, BIOS settings against profile defaults, driver errors, activation, account state, Atera and Splashtop in green/yellow/red, and records re-imaging as the disk sanitization method
-  2. Any run with internet uploads every result on the stick that the central store lacks, for any laptop, including ones checked offline at an earlier shop, and re-running the upload creates no duplicates
-  3. When the store is unreachable, sync shows yellow and imaging and Verify still finish
-  4. The central store is chosen from a recorded comparison (leak model, PS 5.1 support, cost, Excel pull, dedupe). Laptops hold only a write-only credential, and the operator's Excel tracker refreshes from a latest-per-serial view on desktop or web
+  1. Verify always runs last, after Atera. It reports firmware currency, BIOS settings against profile defaults, driver errors, activation, account state, Atera and Splashtop in green/yellow/red, and records re-imaging as the disk sanitization method
 **Plans**: TBD
 
 ### Phase 7: Web Bootstrap and Combined Image
@@ -115,5 +112,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
 | 5. Deploy and First Logon | 0/TBD | Not started | - |
-| 6. Verify and Results Sync | 0/TBD | Not started | - |
+| 6. Verify | 0/TBD | Not started | - |
 | 7. Web Bootstrap and Combined Image | 0/TBD | Not started | - |

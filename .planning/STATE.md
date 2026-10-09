@@ -6,7 +6,7 @@ status: planning
 stopped_at: Phase 1 context gathered
 last_updated: "2026-10-06T03:01:25.327Z"
 last_activity: 2026-10-06
-last_activity_desc: Roadmap created (7 phases, 63/63 v1 requirements mapped)
+last_activity_desc: Roadmap created (7 phases, 57/57 v1 requirements mapped)
 state_head: 601290ddb1299cd29235db6ed7f922fc608b7e19
 progress:
   total_phases: 7
@@ -22,7 +22,7 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-10-05)
 
-**Core value:** An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result reaches the central store even when the shop's internet is unreliable.
+**Core value:** An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result saved to the Tools stick.
 **Current focus:** Phase 1: Modular Foundation
 
 ## Current Position
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 Phase: 1 of 7 (Modular Foundation)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-10-06 — Roadmap created (7 phases, 63/63 v1 requirements mapped)
+Last activity: 2026-10-06 — Roadmap created (7 phases, 57/57 v1 requirements mapped)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -76,7 +76,6 @@ These are phase-level research flags from research/SUMMARY.md, not blockers:
 - [Phase 2]: Bench-verify HP BIOS USB folder paths on a real G5 and G6 (sources conflict on folder variants). Confirm G5 latest BIOS (sp157750) and that it includes the 2023 certificates
 - [Phase 4]: Check HP catalog coverage for Win11 26H2. Hardware-test FAT32 split-WIM boot with Secure Boot on. Confirm DISM `/Add-Driver /Recurse` exit codes
 - [Phase 5]: VM-bench blank-password autologon on build 26300 across two reboots. Bench Atera MSI properties and a realistic timeout
-- [Phase 6]: Bench Azure Blob create-only SAS from PS 5.1 (`If-None-Match: *` PUT, 409/412 handling, Excel Power Query). Verify Excel for the web refresh
 - [Phase 7]: Research G5/G6 driver pack overlap and keep firmware-class INFs out of the bulk install. Ship the combined image only after a bench test on both models passes
 
 ## Deferred Items

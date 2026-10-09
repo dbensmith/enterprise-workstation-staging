@@ -8,7 +8,7 @@
 
 The existing HP tooling moves into a vendor-neutral repo: a common module plus an HP vendor module behind one interface, with 840 G5 and 840 G6 profiles. Tests and lint pass on Windows PowerShell 5.1 with no suppressions. No secrets in the repo or its history, and a local gate blocks new ones.
 
-Requirements: REPO-01..06, SEC-01..03. Out of scope here: firmware staging (Phase 2), Assess (Phase 3), image build (Phase 4), first logon (Phase 5), results sync (Phase 6), web bootstrap (Phase 7).
+Requirements: REPO-01..06, SEC-01..03. Out of scope here: firmware staging (Phase 2), Assess (Phase 3), image build (Phase 4), first logon (Phase 5), Verify (Phase 6), web bootstrap (Phase 7).
 
 </domain>
 
@@ -51,7 +51,7 @@ Requirements: REPO-01..06, SEC-01..03. Out of scope here: firmware staging (Phas
 ### Quality and secret gates
 - **D-13:** Gates run as a local pre-commit hook only (no GitHub Actions CI). Accepted trade-off: hooks can be bypassed with `--no-verify`.
 - **D-14:** One script, `Test-Kit.ps1`, runs Pester 5+, PSScriptAnalyzer (zero findings, zero suppressions) and gitleaks under Windows PowerShell 5.1. `-InstallHook` installs the pre-commit hook; a switch scans full history for success criterion 4.
-- **D-15:** Real config lives in `kit/config.local.psd1` (gitignored), beside `Run.cmd`, so it travels with the Tools stick and is found the same way in the repo and on USB. Parameters override it. The committed `kit/config.example.psd1` documents the schema (Atera and store settings only).
+- **D-15:** Real config lives in `kit/config.local.psd1` (gitignored), beside `Run.cmd`, so it travels with the Tools stick and is found the same way in the repo and on USB. Parameters override it. The committed `kit/config.example.psd1` documents the schema (Atera settings only).
 
 ### Claude's Discretion
 - Exact module/function names, parameter names beyond what the contract test pins, and internal file organisation within `core/` and each vendor folder.
