@@ -83,3 +83,9 @@ Run on the freshly staged machine:
 # Run audit as Administrator
 .\Test-DeviceBaseline.ps1
 ```
+
+Or download and run the latest version straight from `main` (the URL tracks the branch, so it always serves the current file), from an elevated PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/dbensmith/enterprise-workstation-staging/main/src/Test-DeviceBaseline.ps1 | iex
+```
