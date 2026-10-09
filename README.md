@@ -89,3 +89,5 @@ Or download and run the latest version straight from `main` (the URL tracks the 
 ```powershell
 irm https://raw.githubusercontent.com/dbensmith/enterprise-workstation-staging/main/src/Test-DeviceBaseline.ps1 | iex
 ```
+
+Saving the `.txt`: interactively the script asks where to save (Enter accepts the default: the removable drive it ran from, else the earliest removable letter). Non-interactively it saves to that default without asking. `-OutFile <file or folder>` answers the question up front; with `irm | iex` use `$env:PK_OUTFILE = 'D:\results'` first.

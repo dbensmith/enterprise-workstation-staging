@@ -1,4 +1,7 @@
 # Unit audit: serial, spec, BIOS, OS, activation, Atera. Run as admin: irm <url> | iex
+[CmdletBinding()]
+param([string]$OutFile)  # not bound under irm | iex; use $env:PK_OUTFILE there
+if (-not $OutFile -and $env:PK_OUTFILE) { $OutFile = $env:PK_OUTFILE }
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Warning "Not running as Administrator. Some checks (WMI services, physical disk) may be restricted."
@@ -272,19 +275,45 @@ foreach ($line in $lines) {
     }
 }
 
-# Save to a removable drive only (never a fixed disk): the stick this script ran from if it is removable,
-# otherwise the removable drive with the earliest letter (D: before E:), e.g. when run from the web or a fixed disk
+# Where to save the .txt: the stick this script ran from if it is removable, otherwise the removable drive
+# with the earliest letter (D: before E:). Fixed disks are never a default (e.g. when run from the web).
 $removable = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Removable' } | Sort-Object DriveLetter)
 $runRoot = if ($PSScriptRoot) { [string]$PSScriptRoot.Substring(0, 1) } else { $null }
 $usb = $removable | Where-Object { $runRoot -and $_.DriveLetter -eq $runRoot } | Select-Object -First 1
 if (-not $usb) { $usb = $removable | Select-Object -First 1 }
+$safeSn = ($sn -replace '[^\w\.-]', '_')
+$defaultOut = if ($usb) { "$($usb.DriveLetter):\results\$safeSn.txt" } else { $null }
 
-if ($usb) {
-    $dir = "$($usb.DriveLetter):\results"
-    New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
-    $safeSn = ($sn -replace '[^\w\.-]', '_')
-    $lines | Set-Content -Path (Join-Path $dir "$safeSn.txt") -Encoding UTF8 -Force
-    Write-Host "Saved: $dir\$safeSn.txt" -ForegroundColor Green
+# -OutFile (or $env:PK_OUTFILE for irm | iex) answers the "save where?" question; a folder gets <serial>.txt inside it
+$target = $null
+if ($OutFile) {
+    $target = $OutFile
 } else {
-    Write-Host "No removable USB drive found - photo the screen." -ForegroundColor Yellow
+    $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and
+                   -not ([Environment]::GetCommandLineArgs() -contains '-NonInteractive')
+    if ($interactive) {
+        $hint = if ($defaultOut) { "Enter = $defaultOut" } else { 'no removable drive found' }
+        $answer = (Read-Host "Save results to a file? Type a path ($hint), or 'n' to skip").Trim().Trim('"')
+        if ($answer -match '^(n|no)$') { $target = $null }
+        elseif ($answer) { $target = $answer }
+        else { $target = $defaultOut }
+    } else {
+        $target = $defaultOut
+    }
+}
+
+if ($target) {
+    if ((Test-Path -LiteralPath $target -PathType Container) -or $target -match '[\/]$') {
+        $target = Join-Path $target "$safeSn.txt"
+    }
+    try {
+        $dir = Split-Path -Path $target -Parent
+        if ($dir) { New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null }
+        $lines | Set-Content -Path $target -Encoding UTF8 -Force -ErrorAction Stop
+        Write-Host "Saved: $target" -ForegroundColor Green
+    } catch {
+        Write-Host "Could not save to $target - photo the screen." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Not saved (no removable USB drive or save skipped) - photo the screen." -ForegroundColor Yellow
 }
