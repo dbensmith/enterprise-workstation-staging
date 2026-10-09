@@ -272,14 +272,12 @@ foreach ($line in $lines) {
     }
 }
 
-# Save to the USB drive with the earliest drive letter (D: before E:) if present; supports Removable and Fixed USB drives
-$usbDiskNumbers = @(Get-Disk -ErrorAction SilentlyContinue | Where-Object BusType -eq 'USB' | Select-Object -ExpandProperty Number)
-$usb = Get-Volume -ErrorAction SilentlyContinue | Where-Object {
-    $_.DriveLetter -and (
-        $_.DriveType -eq 'Removable' -or
-        ($usbDiskNumbers -contains (Get-Partition -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue).DiskNumber)
-    )
-} | Sort-Object DriveLetter | Select-Object -First 1
+# Save to a removable drive only (never a fixed disk): the stick this script ran from if it is removable,
+# otherwise the removable drive with the earliest letter (D: before E:), e.g. when run from the web or a fixed disk
+$removable = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Removable' } | Sort-Object DriveLetter)
+$runRoot = if ($PSScriptRoot) { [string]$PSScriptRoot.Substring(0, 1) } else { $null }
+$usb = $removable | Where-Object { $runRoot -and $_.DriveLetter -eq $runRoot } | Select-Object -First 1
+if (-not $usb) { $usb = $removable | Select-Object -First 1 }
 
 if ($usb) {
     $dir = "$($usb.DriveLetter):\results"
@@ -288,5 +286,5 @@ if ($usb) {
     $lines | Set-Content -Path (Join-Path $dir "$safeSn.txt") -Encoding UTF8 -Force
     Write-Host "Saved: $dir\$safeSn.txt" -ForegroundColor Green
 } else {
-    Write-Host "No USB drive found - photo the screen." -ForegroundColor Yellow
+    Write-Host "No removable USB drive found - photo the screen." -ForegroundColor Yellow
 }
