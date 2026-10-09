@@ -268,7 +268,7 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 ### Pitfall 14: Secrets leaking via git history, results, logs, and artifacts
 
 **What goes wrong:** The repository "may be public or shared". Current history is tiny (two commits, no secret patterns found by a read-only `git log -G` scan other than docs text), but the new features add exactly the dangerous items.
-- The Atera MSI and its download link, central-store IDs/tokens (the existing uploader takes a Google Form ID and entry ID as parameters; those are write endpoints anyone can spam if they leak), BIOS password `.bin` files from `HpqPswd`, and Wi-Fi details.
+- The Atera MSI and its download link, central-store IDs/tokens (SAS tokens and similar write endpoints; anyone can spam them if they leak), BIOS password `.bin` files from `HpqPswd`, and Wi-Fi details.
 - `.gitignore` currently covers `HP_Staging/`, ISOs/WIMs/ESDs/SWMs and logs, but not `*.msi`, `*.bin`, `config*.local.*`, `results/`, `*.json` results, `.env`, `secrets/`, or `Tools/`/`Install/` stick mirror folders.
 - Logs and transcripts record command lines (MSI properties, tokens) and the typed Wi-Fi password if it is ever echoed. `firstboot.log` is ignored but a new transcript name may not be.
 - Deleting a secret from the repo does not remove it: history, forks, PR diffs, and caches keep it; revoke/rotate first, scrub later (git-filter-repo/BFG after rotation) (MEDIUM, consistent sources).
@@ -276,12 +276,12 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 
 **Prevention:**
 - Add a runtime config loader (`config.local.psd1` gitignored, or stick `config\`, or parameters) and a committed `config.example.psd1` with placeholders only.
-- Expand `.gitignore` now, before new files exist; add pre-commit and CI secret scan (gitleaks or similar) with a custom rule set for Atera URLs, Google Form `formResponse` IDs, and the `HpqPswd` password file names; test it with a canary secret.
+- Expand `.gitignore` now, before new files exist; add pre-commit and CI secret scan (gitleaks or similar) with a custom rule set for Atera URLs, Azure SAS `sig=` tokens, and the `HpqPswd` password file names; test it with a canary secret.
 - Redact in a single logging function; transcripts are off by default or scrub-filtered.
 - Never put the BitLocker recovery key in the results schema that syncs; if needed it goes to a local-only file.
-- If anything leaks, rotate first (Atera token/link, form ID), then rewrite history.
+- If anything leaks, rotate first (Atera token/link, SAS token), then rewrite history.
 
-**Detection:** Scanner hit; strings like `integratorLogin`, `formResponse`, `AccountId` in diff; unexpected files in `git status`.
+**Detection:** Scanner hit; strings like `integratorLogin`, `AccountId` in diff; unexpected files in `git status`.
 
 **Phase:** P1 (first), then every phase that adds a config value.
 
@@ -313,10 +313,9 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 ### Pitfall 16: Central store duplicates, ordering, and timezone
 
 **What goes wrong:**
-- Catch-up sync means the same result gets uploaded more than once (retries, two laptops, two sticks). Google Forms appends only and never updates; the existing uploader sends one pipe-joined text field with no run identifier and a local-time `yyyy-MM-dd HH:mm` with no zone (violates the ISO 8601 UTC requirement).
+- Catch-up sync means the same result gets uploaded more than once (retries, two laptops, two sticks). Key each result by serial plus UTC timestamp so a retry is a no-op.
 - "Upload every result newer than what the store has" relies on timestamps. Laptop clocks are not trustworthy (dead CMOS, wrong zone at OOBE). A unit with a clock set to 2019 never looks "newer"; one set ahead looks newer forever.
 - Excel has no native ISO 8601 text parsing; paste leaves text. Power Query `DateTimeZone.FromText` parses `...Z` correctly (HIGH). Text ISO strings sort correctly only if every row uses the same fixed-width `Z` format.
-- Google Sheets/Forms records its own receive `Timestamp` in the spreadsheet's configured time zone; the form timestamp and the laptop UTC timestamp can be mistaken for each other (MEDIUM).
 - PS 5.1 `ConvertTo-Json` serializes `DateTime` as `\/Date(1234567890)\/` and truncates nested objects at depth 2 by default; `Get-Date -Format o` is local time with an offset, not `Z`; culture can change digits/calendar.
 - ISO timestamps contain colons and cannot be file names on Windows.
 
@@ -324,7 +323,6 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 - Immutable result record with a `RunId` GUID, `Serial`, `ResultUtc` generated as `[DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)`, plus `ClockSkewSeconds` (from Pitfall 12) and schema version. Build JSON with pre-formatted strings, `-Depth 5`, written as UTF-8 without BOM.
 - Sync by set difference on `RunId` (what the store lacks), not on timestamp comparison. The store records its own server receive time and dedupes on `RunId`; the tracker takes the newest `ResultUtc` per `Serial` via Power Query (Group By, Max) and flags rows whose `ResultUtc` differs from server receive time by more than a day.
 - File names: `<serial>_<yyyyMMddTHHmmssZ>_<runid8>.json`, written to a temp name then renamed so a pulled stick never leaves a half-written file.
-- Set the Google Sheet time zone to UTC if Forms is chosen, and hide the form Timestamp column from the pull or use it only as receive time.
 
 **Detection:** Duplicate rows per serial/run; "newest" result is older than another; Excel shows text instead of datetimes; ordering flips after a laptop with a wrong clock uploads.
 

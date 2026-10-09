@@ -92,7 +92,7 @@
 - [ ] **RES-04**: Upload is idempotent, keyed by serial plus UTC timestamp, so re-runs never create duplicates
 - [ ] **RES-05**: Laptops hold only a write-only (or capability) credential; any read credential stays on the operator's PC
 - [ ] **RES-06**: Sync failures show yellow and never block imaging or Verify
-- [ ] **RES-07**: Central store is chosen after research comparing the leak model, PS 5.1 support, cost, Excel pull and dedupe (leading candidates: Apps Script web app, Azure Blob with write-only SAS)
+- [ ] **RES-07**: Central store is chosen after research comparing the leak model, PS 5.1 support, cost, Excel pull and dedupe (leading candidate: Azure Blob with write-only SAS)
 - [ ] **RES-08**: Central store exposes a latest-per-serial view the Excel tracker can pull (desktop/web refresh)
 
 ### Web Bootstrap

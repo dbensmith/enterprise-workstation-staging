@@ -21,7 +21,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 - PSScriptAnalyzer 1.25.0 (no suppressions per policy)
 - gitleaks v8.30.1 (MIT, pre-commit + CI)
 - HP Platform IDs: G5 = 83B2 (Q78 BIOS), G6 = 8549 (R70 BIOS)
-- Central store: Google Apps Script + Sheet (free, idempotent upsert)
+- Central store: Azure Blob with a create-only SAS (idempotent per-run blobs)
 
 **Confidence:** HIGH for versioning. MEDIUM for 26H2 OS support with HP catalogs.
 
@@ -60,7 +60,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 
 5. **Phase 5: First-Logon** — Stage engine, online gate, LocalAccount, FirmwareGate, Atera stage, console output. Research: FirstLogonCommands on 26300; BitLocker suspension depth.
 
-6. **Phase 6: Verification & Store** — Result schema, check expansion, sync algorithm, store adapter. Research: Apps Script PS 5.1 compatibility.
+6. **Phase 6: Verification & Store** — Result schema, check expansion, sync algorithm, store adapter. Research: Azure Blob create-only SAS from PS 5.1.
 
 7. **Phase 7: Bootstrap** — Bootstrap stub, release packaging, short URL. Research: None.
 
@@ -74,7 +74,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 - **Phase 3:** MEDIUM-PRIORITY — HP catalog gaps, G5 latest BIOS.
 - **Phase 4:** VM BENCH + HARDWARE TEST — blank-password on 26300, FAT32 boot with Secure Boot ON.
 - **Phase 5:** HARDWARE BENCH (optional) — Atera MSI timeout realism.
-- **Phase 6:** APPS SCRIPT RESEARCH — PS 5.1 compatibility; if negative, pivot to Azure Blob.
+- **Phase 6:** AZURE BLOB RESEARCH — PS 5.1 compatibility of create-only SAS PUT with `If-None-Match`.
 
 ## Confidence Assessment
 
@@ -87,14 +87,14 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 | USB layouts | MEDIUM | HP SoftPaq HIGH; folder variants MEDIUM (conflicting); bench verification flagged |
 | First-logon | MEDIUM | Microsoft docs HIGH; mechanisms need VM bench |
 | Online gate | MEDIUM | Atera docs MEDIUM-HIGH; timeout inference MEDIUM |
-| Store options | MEDIUM | Apps Script basics HIGH; PS 5.1 redirect not bench-verified |
+| Store options | MEDIUM | Azure Blob semantics documented; PS 5.1 PUT not bench-verified |
 
-**Overall: MEDIUM-HIGH.** Foundations solid; architecture testable; hardware/Apps Script unknowns are phase-level research tasks, not roadmap blockers.
+**Overall: MEDIUM-HIGH.** Foundations solid; architecture testable; hardware/Azure Blob unknowns are phase-level research tasks, not roadmap blockers.
 
 ### Gaps to Address (Phase-Level Research)
 
 1. HP USB layouts (Phase 2) — Bench test on real G5/G6
-2. Apps Script PS 5.1 (Phase 6) — Test doPost 302, LockService, Excel Power Query
+2. Azure Blob create-only SAS from PS 5.1 (Phase 6) — Test `If-None-Match: *` PUT, 409/412 handling, Excel Power Query
 3. Blank-password autologon on 26300 (Phase 5) — VM bench two reboots
 4. G5 latest BIOS and 2023 certs (Phase 3) — Confirm sp157750, certificate inclusion
 5. DISM union tolerance (Phase 4) — Confirm /Add-Driver /Recurse exit codes
@@ -109,7 +109,7 @@ All phase-level, not blockers.
 
 **Status: SYNTHESIS COMPLETE**
 
-All four research files synthesized. Incident fix isolated and safe. Architecture sound. Confidence MEDIUM-HIGH. Hardware/Apps Script gaps are phase-level research tasks with clear success criteria; not roadmap blockers.
+All four research files synthesized. Incident fix isolated and safe. Architecture sound. Confidence MEDIUM-HIGH. Hardware/Azure Blob gaps are phase-level research tasks with clear success criteria; not roadmap blockers.
 
 **Recommendation:** APPROVED for roadmap planning.
 

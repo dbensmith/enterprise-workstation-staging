@@ -76,7 +76,7 @@ These are phase-level research flags from research/SUMMARY.md, not blockers:
 - [Phase 2]: Bench-verify HP BIOS USB folder paths on a real G5 and G6 (sources conflict on folder variants). Confirm G5 latest BIOS (sp157750) and that it includes the 2023 certificates
 - [Phase 4]: Check HP catalog coverage for Win11 26H2. Hardware-test FAT32 split-WIM boot with Secure Boot on. Confirm DISM `/Add-Driver /Recurse` exit codes
 - [Phase 5]: VM-bench blank-password autologon on build 26300 across two reboots. Bench Atera MSI properties and a realistic timeout
-- [Phase 6]: Test Apps Script from PS 5.1 (doPost 302 redirect, LockService, Excel Power Query). If it fails, pivot to Azure Blob with a write-only SAS
+- [Phase 6]: Bench Azure Blob create-only SAS from PS 5.1 (`If-None-Match: *` PUT, 409/412 handling, Excel Power Query). Verify Excel for the web refresh
 - [Phase 7]: Research G5/G6 driver pack overlap and keep firmware-class INFs out of the bulk install. Ship the combined image only after a bench test on both models passes
 
 ## Deferred Items

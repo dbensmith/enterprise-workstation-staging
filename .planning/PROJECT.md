@@ -54,7 +54,7 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 - [ ] Verify timestamps every result in ISO 8601 UTC (e.g. `2026-10-05T10:02:00Z`)
 - [ ] Results saved per serial to the Tools stick's `results` folder
 - [ ] Sync: every script run with internet MUST upload every result on the stick, for any laptop, newer than what the central store has (catches up laptops checked offline); SHOULD run in background if simple, don't overbuild
-- [ ] Central store must be pullable by the Excel tracker — needs proper research. Options: Google Form → Sheet, Microsoft Forms/Lists, OneDrive/SharePoint Excel via Microsoft Graph, Power Automate, files committed to a private repo, Airtable, cloud storage bucket, others. Compare on: no stored credentials on target laptops, works from PowerShell 5.1, cost, Excel (incl. mobile) pull/refresh, newest result per serial without duplicates, data exposed if a URL leaks
+- [ ] Central store must be pullable by the Excel tracker — needs proper research. Options: Microsoft Forms/Lists, OneDrive/SharePoint Excel via Microsoft Graph, Power Automate, files committed to a private repo, Airtable, cloud storage bucket, others. Compare on: no stored credentials on target laptops, works from PowerShell 5.1, cost, Excel (incl. mobile) pull/refresh, newest result per serial without duplicates, data exposed if a URL leaks
 
 **Secrets**
 - [ ] No credentials or customer-specific settings in the repo, including history (Atera MSI and download link, central-store IDs or tokens, etc.); supplied at run time via gitignored local config, the Tools stick, or parameters

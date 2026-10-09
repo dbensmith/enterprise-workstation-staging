@@ -3,10 +3,6 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
     Write-Warning "Not running as Administrator. Some checks (WMI services, physical disk) may be restricted."
 }
-# --- Central log (Google Form). Leave blank to skip upload. ---
-$FormId = ''   # from form URL: docs.google.com/forms/d/e/<FormId>/viewform
-$Entry = ''   # from pre-filled link, e.g. entry.123456789
-
 # WMI must run (Atera and this script depend on it); some vendor images disable it
 Set-Service winmgmt -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service winmgmt -ErrorAction SilentlyContinue
@@ -273,21 +269,6 @@ foreach ($line in $lines) {
         Write-Host $line.Substring($line.IndexOf('[FAIL]') + 6)
     } else {
         Write-Host $line
-    }
-}
-
-# Upload one row to the Google Form (Sheet -> Excel can pull it)
-if ($FormId -and $Entry) {
-    $row = @((Get-Date -Format 'yyyy-MM-dd HH:mm'), $sn, $env:COMPUTERNAME, $modelDisplay, $cpuDisplayText, $ram, "$($disk.FriendlyName)", "$($disk.BusType)", $diskGB,
-        $scr, $biosText, $osText, $licMap[[int]$lic.LicenseStatus], $chan, $lic.PartialProductKey, $fwLast, $keyMatch,
-        $(if ($kms) { 'KMS' } else { '' }), $(if ($atera) { "$($atera.Status)" } else { 'None' }), $splashText,
-        (PF $specStatus), (PF $actOk), (PF $ateraOk)) -replace '\|', '/'
-    try {
-        Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Method Post -Uri "https://docs.google.com/forms/d/e/$FormId/formResponse" -Body @{ $Entry = ($row -join '|') } | Out-Null
-        Write-Host "Uploaded to central log." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Upload failed (no internet?) - USB/photo only." -ForegroundColor Yellow
     }
 }
 
