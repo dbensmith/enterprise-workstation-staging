@@ -94,6 +94,7 @@
 - [ ] **BOOT-01**: A short `irm <url> | iex` served from GitHub runs the provisioning script from a tagged release, not `main`
 - [ ] **BOOT-02**: Bootstrap falls back to the on-stick copy when offline
 - [ ] **BOOT-03**: The web route pulls only scripts, modules and profiles (no secrets, ISOs or BIOS files)
+- [ ] **BOOT-04**: The typed URL is as short as possible because operators type it by hand on laptops; the shortest workable form is a Phase 7 research priority (candidates: short repo/owner names, GitHub Pages, own short domain or redirect, tagged-release alias)
 
 ## v2 Requirements
 
@@ -184,10 +185,11 @@
 | BOOT-01 | Phase 7 | Pending |
 | BOOT-02 | Phase 7 | Pending |
 | BOOT-03 | Phase 7 | Pending |
+| BOOT-04 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 57 total
-- Mapped to phases: 57
+- v1 requirements: 58 total
+- Mapped to phases: 58
 - Unmapped: 0 ✓
 
 ---

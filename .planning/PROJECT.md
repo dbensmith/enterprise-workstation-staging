@@ -44,7 +44,7 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 - [ ] Auto-detects vendor, model and platform
 - [ ] Deploy MUST enforce the order above: warn or stop on out-of-date firmware, offer firmware-from-Windows fallback with BitLocker suspended on the Windows drive only
 - [ ] Verify always runs last
-- [ ] MUST run from USB; SHOULD run from a short `irm <url> | iex` served from GitHub (replacing pastebin), with automatic updates from the repo; which pieces the web route can pull is for research
+- [ ] MUST run from USB; SHOULD run from a short `irm <url> | iex` served from GitHub (replacing pastebin), with automatic updates from the repo; which pieces the web route can pull is for research. The typed URL MUST be as short as possible (typed by hand); finding the shortest workable form is a research priority
 
 **Atera**
 - [ ] MUST NOT start the installer until the laptop is confirmed online (the MSI asks for an install token when offline, which the operator doesn't have)

@@ -92,9 +92,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 7: Web Bootstrap and Combined Image
 **Goal**: v1 additions beyond the MVP. The operator can start provisioning from a short GitHub command instead of the stick copy, and one image serves both the G5 and the G6. This phase comes after the per-model images (Phase 4) and platform-ID driver selection (Phase 5) are proven
 **Depends on**: Phase 6
-**Requirements**: BOOT-01, BOOT-02, BOOT-03, IMG-09
+**Requirements**: BOOT-01, BOOT-02, BOOT-03, BOOT-04, IMG-09
 **Success Criteria** (what must be TRUE):
   1. Typing a short `irm <url> | iex` on a laptop with internet runs the provisioning script from the latest tagged release, not `main`
+  1a. The typed URL is as short as it can be made, because the operator types it by hand. Finding the shortest workable form (research priority, see BOOT-04) comes before the bootstrap is wired up
   2. With no internet, the bootstrap falls back to the copy on the Tools stick
   3. The web route downloads only scripts, modules and profiles, never secrets, ISOs or BIOS files
   4. One combined image installs on a real G5 and a real G6, first logon picks each model's driver pack by platform ID, and Verify passes on both

@@ -84,7 +84,7 @@ Run on the freshly staged machine:
 .\Test-DeviceBaseline.ps1
 ```
 
-Or download and run the latest version straight from `main` (the URL tracks the branch, so it always serves the current file), from an elevated PowerShell:
+Or download and run the latest version straight from `main` (the URL tracks the branch, so it always serves the current file), from an elevated PowerShell. This long URL is interim: the bootstrap URL is typed by hand, so a much shorter one is a research priority (see `BOOT-04` in `.planning/REQUIREMENTS.md`):
 
 ```powershell
 irm https://raw.githubusercontent.com/dbensmith/enterprise-workstation-staging/main/src/Test-DeviceBaseline.ps1 | iex
