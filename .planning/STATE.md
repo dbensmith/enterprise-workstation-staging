@@ -77,7 +77,7 @@ These are phase-level research flags from research/SUMMARY.md, not blockers:
 - [Phase 4]: Check HP catalog coverage for Win11 26H2. Hardware-test FAT32 split-WIM boot with Secure Boot on. Confirm DISM `/Add-Driver /Recurse` exit codes
 - [Phase 5]: VM-bench blank-password autologon on build 26300 across two reboots. Bench Atera MSI properties and a realistic timeout
 - [Phase 7]: Research G5/G6 driver pack overlap and keep firmware-class INFs out of the bulk install. Ship the combined image only after a bench test on both models passes
-- [Phase 7]: Research priority: shortest typeable bootstrap URL (typed by hand on laptops). Compare short owner/repo names on raw.githubusercontent.com, GitHub Pages, a short custom domain or redirect, and tagged-release aliases; confirm each works from PS 5.1 with TLS 1.2 and does not float on `main`
+- [Phase 7]: Research priority: shortest typeable bootstrap URL (typed by hand on laptops). Compare short owner/repo names on raw.githubusercontent.com, GitHub Pages, a short custom domain or redirect; confirm each works from PS 5.1 with TLS 1.2 and serves the current `main`
 
 ## Deferred Items
 

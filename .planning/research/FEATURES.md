@@ -49,7 +49,6 @@ Not expected of a basic script, but they are what make this beat a checklist plu
 | Firmware-currency check against a pinned manifest | Operator sees "BIOS 01.xx.yy is current/out of date" without internet at the shop | MEDIUM | Build step writes `firmware-manifest.json` (model, platform ID, latest version, hash) onto the Tools stick; Assess/Verify compare. Stops the "latest" ambiguity that caused wrong-folder confusion. |
 | Platform-ID pack selection with a G5+G6 shared image | One image works on either model | HIGH | Overlap analysis is a research item. Fail-soft: install everything applicable, mark non-applicable INF failures as WARN. |
 | Custom latest-driver pack alongside vendor pack | Published packs are often stale | HIGH | HPCMSL `New-HPDriverPack` (build machine only). Provenance recorded (pack versions) in the per-serial result so a laptop can be traced to a build. |
-| Self-update from GitHub with version pinning and hash verification | `irm <url> \| iex` is convenient but runs whatever is at the URL | MEDIUM | Serve a tiny bootstrapper from a tagged release (not `main`), verify a SHA-256 of the payload from a pinned manifest, pull only scripts (not ISO/packs). Falls back to the on-stick copy offline. |
 | Condition scoring/grade from the data (A/B/C) | Matches refurb-industry practice, speeds buy decisions | MEDIUM | Derive from battery wear %, disk wear/SMART, RAM/CPU thresholds, lock flags; keep rules in a data file. Cosmetic/manual items only as optional operator-typed fields. |
 | Per-model profiles (`.psd1`) driving expected values | Existing pattern (`profiles/hp-elitebook-840-g6.psd1`) scales to G5 and to Dell/Lenovo modules | LOW | Add expected BIOS settings, firmware minimum, pack selection data. |
 | Vendor interface behind modules | Adding Dell/Lenovo is a new module, not a restructure | MEDIUM | Interface: list models, fetch vendor pack, build custom pack, fetch firmware, install drivers, install firmware. Contract tests (Pester) run against each module. |
@@ -67,7 +66,6 @@ Not expected of a basic script, but they are what make this beat a checklist plu
 | Bypassing BIOS passwords, MDM locks, or Absolute | Rescue purchased locked units | Legal and security exposure; unreliable | Detect in Assess and recommend "do not buy" |
 | GUI app / WinForms front end | Looks friendlier | Phone-first operator, PS 5.1 stock targets; UI adds fragility | Color text menu plus parameters |
 | Cosmetic/grade capture UI | Refurb-industry staple | Not what the operator needs at purchase | Optional free-text notes in the record |
-| Auto-update from `main` without pinning | Always-latest scripts | Supply-chain risk; a bad commit breaks every shop run | Tagged release plus hash check |
 | Dell/Lenovo modules in milestone 1 | Vendor-neutrality | Out of scope per PROJECT.md | Ship the interface and one HP module first |
 
 ## Feature Dependencies
@@ -111,7 +109,7 @@ Prioritize (milestone 1):
 4. Stage-order enforcement with resumable state; Deploy with firmware gate and BIOS-defaults verification.
 5. First-logon chain: offline steps, real online check, gated Atera, Verify last.
 
-Defer: custom latest-driver packs (HIGH complexity), G5+G6 combined image beyond a safe subset, condition scoring, self-update hash pinning (ship a simple tagged-release bootstrapper first), Dell/Lenovo modules.
+Defer: custom latest-driver packs (HIGH complexity), G5+G6 combined image beyond a safe subset, condition scoring, Dell/Lenovo modules.
 
 ## Sources
 

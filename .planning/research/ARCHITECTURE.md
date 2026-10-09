@@ -390,14 +390,11 @@ Constraints: `iex` runs text, so there is no `$PSScriptRoot`, no `param()` block
 Design:
 
 ```
-stub (served from a stable URL under the project owner's control, e.g. GitHub Pages or raw on a tag-pinned path; short because it is typed on a phone):
+stub (served from a stable URL under the project owner's control, e.g. GitHub Pages; short because it is typed on a phone):
   1. [Net.ServicePointManager]::SecurityProtocol = Tls12 ; Set-ExecutionPolicy -Scope Process Bypass -Force
   2. not admin -> relaunch elevated (Start-Process powershell -Verb RunAs ...) with the same one-liner
-  3. find Tools stick by marker -> read ProvisionKit\kit\kit.json (stick version)
-  4. online? GET  https://github.com/<o>/<r>/releases/latest/download/kit.json   (stable redirect URL, no API rate limit; avoid api.github.com: 60 req/h per IP, shop NATs share an IP)
-        { version, sha256, url, minStickVersion }   newer than stick copy -> download kit.zip to %ProgramData%\ProvisionKit\dl,
-        verify SHA-256 against kit.json, Expand-Archive to kit\<version>.new, atomic rename; (optional) mirror verified kit onto stick so offline copy catches up
-     offline or any failure -> use stick copy, WARN "running stick version x"
+  3. find Tools stick by marker -> use the on-stick kit as the fallback
+  4. online? fetch the current kit from main; any failure -> use stick copy, WARN "running stick version"
   5. $env:PK_* / splatted params -> & kit\Provision.ps1 @params  (menu if none)
 ```
 
@@ -418,7 +415,7 @@ Principle: **everything with side effects goes through a core seam function so t
 | Engine | order; **Verify and Persist run last even when a stage throws**; Assess calls zero Mutating stages; Atera installer `Should -Invoke ... -Times 0` when gate fails; resume skips Pass stages | mocks + `Should -Invoke` |
 | Golden | result JSON byte layout: UTC `Z` strings, no BOM, arrays, depth, schema validation | committed fixtures |
 | Layout | build a layout from fake files into `TestDrive`, validate; **negative test that reproduces the incident** (file in wrong folder fails validation) | no hardware needed |
-| Bootstrap | hash mismatch aborts; offline falls back to stick; TLS 1.2 set; no secrets in the stub | mock web seam |
+| Bootstrap | offline falls back to stick; TLS 1.2 set; no secrets in the stub | mock web seam |
 | Bench (tag `Bench`, manual, excluded from CI) | Hyper-V Gen 2 VM running the generated ISO (blank password, autologon, first-logon pipeline, online-gate); real 840 G5 and G6 for BIOS USB layout, UEFI diagnostics on the same stick, DISM union behaviour | checklist with results written into `layouts/*.layout.psd1` `Verified` blocks |
 
 Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilter` mocks no longer fall through to the real command (the current `Mock Get-CimInstance ... -ParameterFilter` tests need a default mock), duplicate `BeforeAll`/`BeforeEach` in one block are errors, and `Assert-MockCalled` is removed (use `Should -Invoke`). CI: GitHub Actions `windows-latest` with `shell: powershell` for 5.1 (MEDIUM, from general knowledge; confirm in the CI phase). Do not run ISO-servicing or DISM-heavy tests on the builder by default; the IMAPI2 ISO test already works in `TestDrive`.
@@ -448,7 +445,6 @@ Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilte
 | Vendor/model rules inside the audit script (current Dell/Lenovo regexes in `Test-DeviceBaseline.ps1`) | Vendor knowledge in neutral code | Profiles + vendor `GetDeviceIdentity`/checks |
 | Hand-typed vendor folder paths | The 2026-10-05 failure mode | Layout manifest, validator, `Verified` gate |
 | Secrets in image, ISO, repo, result, or transcript | Leaks with every laptop | Run-time config from Tools stick, redaction |
-| Auto-update from `main` | A bad commit breaks every shop run | Tagged release + hash, stick fallback |
 | Stage logic that throws to end the run | Skips Verify and the record | Convert to status; engine's `finally` terminal phase |
 | `Read-Host` deep inside functions | Untestable, blocks unattended first logon | Prompts only at the entry layer; everything else takes parameters |
 | PowerShell classes for the vendor interface | Cached definitions break Mock and reload on 5.1 | Descriptor + command map |
@@ -480,7 +476,7 @@ core foundations ──┬─> vendor contract + HP Target ──┬─> Result 
 4. **Result record + check library + Assess mode.** Refactor `Test-DeviceBaseline.ps1` into checks; JSON writer; read-only guarantee tests.
 5. **Stage engine + Deploy + online gate + Atera.** Needs 2 and 4 and config; adds state/resume, firmware gate with BitLocker-suspend fallback.
 7. **Unattend generator + first-logon + ISO integration.** Needs 5; includes the blank-password mechanism and VM bench; per-platform union injection.
-8. **Bootstrap + release packaging.** After the engine stabilizes; kit.json/hash tooling.
+8. **Bootstrap + release packaging.** After the engine stabilizes;.
 9. **Custom/latest packs, vendor pack, G5+G6 overlap analysis.** Highest uncertainty; research first.
 
 ## 17. Research flags
@@ -493,7 +489,6 @@ core foundations ──┬─> vendor contract + HP Target ──┬─> Result 
 | FirstLogonCommands elevation and blank-password autologon behaviour on build 26300 | Mechanism evidence is thin | Phase 7, Hyper-V bench |
 | DISM `/Add-Driver /Recurse` behaviour with non-matching or bad INF in a union folder | Tolerance assumption | Phase 7/9 |
 | `GetVendorPack` availability per HP model (`-Category Driverpack`) | Uneven per platform | Phase 9 |
-| `releases/latest/download` redirect behaviour from PS 5.1 and `Expand-Archive` on large zips | General knowledge, not verified here | Phase 8 |
 
 ## Confidence Assessment
 

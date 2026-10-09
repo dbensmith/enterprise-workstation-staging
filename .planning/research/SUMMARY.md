@@ -60,7 +60,7 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 
 6. **Phase 6: Verification** — Result schema, check expansion.
 
-7. **Phase 7: Bootstrap** — Bootstrap stub, release packaging, short URL. Research: None.
+7. **Phase 7: Bootstrap** — Bootstrap stub (tracks main), short URL. Research: shortest typeable URL.
 
 8. **Phase 8 (v2+): Dell/Lenovo** — Deferred. Needs catalog research, hardware bench per vendor.
 

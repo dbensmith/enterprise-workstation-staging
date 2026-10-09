@@ -296,7 +296,7 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 - `Invoke-RestMethod` and `Invoke-WebRequest` on 5.1 need `-UseBasicParsing` for `Invoke-WebRequest` on machines where the IE first-run engine is not configured (stock Windows 11: usually fine but still add it).
 
 **Prevention:**
-- The short `irm` line fetches only a small bootstrap that downloads a pinned release (tag pointing at a commit SHA, or a release asset) plus a signed/hashed manifest (SHA-256), verifies hashes, then executes. The bootstrap pins; the manifest is updated by a deliberate release step, not by every push. Branch protection and 2FA on the repo.
+- The short `irm` line fetches a small bootstrap from `main` (no release or hash pinning, decided 2026-10-09), then executes it. Branch protection and 2FA on the repo.
 - Wrap the script body so it runs only if fully parsed: define `function Main { ... }` and call `Main` as the very last line; a truncated download then defines nothing harmful.
 - Use a custom short domain or a GitHub Pages short path under your control for the typed URL, not a public shortener.
 - Decide the web-route scope: online-only convenience for Assess/verify; not for flashing or imaging (those must be stick-based and offline-capable).
@@ -409,7 +409,7 @@ Further points:
 | P5 | Atera started offline; "connected" is not online | Real HTTPS check to Atera hosts, clock-skew check, MSI timeout, retry |
 | P5 | Wi-Fi PSK left on delivered unit; autologon left on | Cleanup step; verify removal |
 | P6 | BitLocker/Secure Boot state unknown at delivery | Verify reads encryption, Secure Boot, `UEFICA2023Status`, BIOS settings |
-| P7 | Branch-tracking auto-update; truncated `iex`; TLS defaults | Pin to release plus hash manifest; `Main` called last; set TLS 1.2; ASCII-only source |
+| P7 | Truncated `iex`; TLS defaults | `Main` called last; set TLS 1.2; ASCII-only source |
 
 ## Research Flags for Roadmap
 

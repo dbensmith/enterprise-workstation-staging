@@ -91,10 +91,10 @@
 
 ### Web Bootstrap
 
-- [ ] **BOOT-01**: A short `irm <url> | iex` served from GitHub runs the provisioning script from a tagged release, not `main`
+- [ ] **BOOT-01**: A short `irm <url> | iex` served from GitHub runs the current provisioning script from `main` (no release tags, version pinning or hash pinning)
 - [ ] **BOOT-02**: Bootstrap falls back to the on-stick copy when offline
 - [ ] **BOOT-03**: The web route pulls only scripts, modules and profiles (no secrets, ISOs or BIOS files)
-- [ ] **BOOT-04**: The typed URL is as short as possible because operators type it by hand on laptops; the shortest workable form is a Phase 7 research priority (candidates: short repo/owner names, GitHub Pages, own short domain or redirect, tagged-release alias)
+- [ ] **BOOT-04**: The typed URL is as short as possible because operators type it by hand on laptops; the shortest workable form is a Phase 7 research priority (candidates: short repo/owner names, GitHub Pages, own short domain or redirect)
 
 ## v2 Requirements
 
@@ -105,7 +105,6 @@
 
 ### Hardening & Convenience
 
-- **HARD-01**: Bootstrap verifies the payload's SHA-256 against a pinned manifest
 - **HARD-03**: Condition grade (A/B/C) derived from battery wear, disk health, specs and lock flags
 - **HARD-04**: SSD secure-erase or crypto-erase with recorded evidence
 
@@ -122,7 +121,7 @@
 | Autopilot hash registration | Needs tenant credentials on the laptop; not part of this flow |
 | Bypassing BIOS passwords, MDM locks or Absolute | Legal and security exposure; detect and recommend "do not buy" |
 | GUI front end | Phone-first operator; colour text menu is enough |
-| Auto-update from `main` without pinning | Supply-chain risk |
+| Release tagging, version pinning or hash verification of the web bootstrap | Out of scope (decided 2026-10-09); the bootstrap tracks `main` |
 
 ## Traceability
 

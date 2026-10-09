@@ -207,8 +207,8 @@ Set `[Net.ServicePointManager]::SecurityProtocol = Tls12` explicitly. This also 
 
 - Windows PowerShell 5.1 has the `irm` and `iex` aliases. Force TLS 1.2 first. Use `Invoke-RestMethod`, which does not depend on the IE engine; if `Invoke-WebRequest` is ever used on a fresh Windows, add `-UseBasicParsing`. HIGH.
 - A short bootstrapper must come from `raw.githubusercontent.com`, which works anonymously only for a **public** repo (a private raw URL needs a token, which violates the no-credentials constraint). The project must therefore decide that the repo is public, or accept stick-only distribution. HIGH.
-- Pin to a tag or commit SHA in the URL (`.../<tag>/bootstrap.ps1`), not `main`; raw content is cached by GitHub's CDN for minutes, so a "fix" on `main` is not instantly visible. MEDIUM.
-- Bootstrapper behavior: tiny (under ~50 lines), downloads the tagged release zip (`https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.zip`) to `%TEMP%`, verifies a SHA-256 published in the *release notes or a separate signed manifest* (a hash in the same repo adds no trust), extracts, then runs the script from disk. Check for a newer tag via `https://api.github.com/repos/<owner>/<repo>/releases/latest` (unauthenticated limit is about 60 requests/hour per IP, and a shop NAT shares it, so cache the answer and fall back silently to the on-stick copy).
+- Serve the bootstrap from `main` (no tag or commit pinning). Raw content is cached by GitHub's CDN for minutes, so a "fix" on `main` is not instantly visible. MEDIUM.
+- Bootstrapper behavior: tiny (under ~50 lines), fetches the current scripts from `main` to `%TEMP%` or runs them in memory, then runs from disk; no release tags, no SHA-256 verification of the payload. Offline or on any failure it falls back silently to the on-stick copy.
 - **Web route may pull:** scripts, modules, vendor-module code, profile `.psd1` files, small manifests. **Must not pull:** drivers, BIOS binaries, ISO, Atera MSI/link (vendor licensing, size, and secrets). HP softpaqs are fetched from HP's own CDN with the SHA-256 in the manifest. MEDIUM.
 - AV/EDR may flag a download-and-`iex` cradle; test on a stock Defender-on machine. LOW.
 
@@ -231,7 +231,7 @@ Set `[Net.ServicePointManager]::SecurityProtocol = Tls12` explicitly. This also 
 
 - **`SetupComplete.cmd`** as the only post-setup hook (silently skipped with OEM keys).
 - **`net user User *`** (interactive) and **`wmic`** (being removed from Windows 11 images; use CIM).
-- **`irm https://.../main/... | iex`** unpinned, or from a private repo.
+- **Private repo** as the bootstrap source (raw URLs then need a token).
 - **`gitleaks-action`** on an organization repo; deprecated `gitleaks detect`/`protect` forms.
 - **Installing HPCMSL or Pester on target laptops** (project constraint); builder only.
 - **Dell Command | Update on stock targets** (needs .NET Desktop Runtime 10).

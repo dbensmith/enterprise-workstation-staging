@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 4: Per-Model Image and Install Stick** - ISO selection, vendor or custom driver packs, unattended per-model G5 and G6 images on a bootable Install stick, no firmware in the image
 - [ ] **Phase 5: Deploy and First Logon** - Deploy enforces the stage order; first logon runs drivers, the online gate and Atera, resumable across reboots
 - [ ] **Phase 6: Verify** - Verify runs last on every laptop and saves its result to the Tools stick
-- [ ] **Phase 7: Web Bootstrap and Combined Image** - Short GitHub bootstrap from a tagged release with offline fallback, plus one image for both G5 and G6 (v1, not MVP)
+- [ ] **Phase 7: Web Bootstrap and Combined Image** - Short GitHub bootstrap that runs the current `main`, with offline fallback, plus one image for both G5 and G6 (v1, not MVP)
 
 ## Phase Details
 
@@ -94,7 +94,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Depends on**: Phase 6
 **Requirements**: BOOT-01, BOOT-02, BOOT-03, BOOT-04, IMG-09
 **Success Criteria** (what must be TRUE):
-  1. Typing a short `irm <url> | iex` on a laptop with internet runs the provisioning script from the latest tagged release, not `main`
+  1. Typing a short `irm <url> | iex` on a laptop with internet runs the current provisioning script from `main` (no release tags, no version or hash pinning)
   1a. The typed URL is as short as it can be made, because the operator types it by hand. Finding the shortest workable form (research priority, see BOOT-04) comes before the bootstrap is wired up
   2. With no internet, the bootstrap falls back to the copy on the Tools stick
   3. The web route downloads only scripts, modules and profiles, never secrets, ISOs or BIOS files
