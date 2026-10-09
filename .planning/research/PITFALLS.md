@@ -15,7 +15,7 @@
 | P3 | Driver packs and model selection (G5/G6, platform ID, custom packs) |
 | P4 | Image build: source ISO, slipstream, ISO output, Install stick |
 | P5 | Unattended setup and first-logon orchestration (account, order, reboots, Atera, online check) |
-| P6 | Verify, results format, sync, central store |
+| P6 | Verify, results format |
 | P7 | `irm \| iex` web bootstrap and auto-update |
 | P8 | Dell/Lenovo vendor modules (later) |
 
@@ -128,7 +128,7 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 **Consequences:** Recovery prompt after flash; or protection left suspended forever on a delivered unit (security regression nobody noticed).
 
 **Prevention:**
-- Suspend only `$env:SystemDrive` and capture the key protector info to the result record before suspending (keys are secrets: write to the stick's secure results, never to git or the central store).
+- Suspend only `$env:SystemDrive` and capture the key protector info to the result record before suspending (keys are secrets: write to the stick's secure results, never to git).
 - Prefer `-b` for HpFirmwareUpdRec so the tool owns suspension; if suspending yourself use a higher RebootCount, and resume explicitly (`Resume-BitLocker`) after the post-flash boot, then verify `ProtectionStatus`.
 - Treat "BitLocker already off" as success, not warn.
 - Windows 11 24H2+ turns on device encryption by default only for Microsoft/work-account sign-in; local-account setups (this toolkit's flow) are not auto-encrypted and no key is saved (MEDIUM). Verify records encryption state so a unit is never delivered half-encrypted.
@@ -208,7 +208,7 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 - Idempotent steps: each step checks "already done" so a retry after reboot is safe.
 - Visible progress: the operator needs to see which step is running on the screen, with green/yellow/red lines, and a hard overall timeout that ends in a red summary rather than a blank wait.
 - Confirm-to-wipe before partitioning, or an explicit "WIPE THIS DISK" prompt in the setup flow (keep the unattended part after the confirmation).
-- At the end of the run (after upload), remove the shop WLAN profile (`netsh wlan delete profile name=* ` or the specific SSID) and the autologon, and log both.
+- At the end of the run (after Verify), remove the shop WLAN profile (`netsh wlan delete profile name=* ` or the specific SSID) and the autologon, and log both.
 - Keep the account password and any tokens out of the unattend; `C:\Windows\Panther\unattend.xml` retains plaintext/base64 values and is not always scrubbed (Microsoft/security write-ups; the cache marks removed data `SENSITIVE_DATA_DELETED` only if processing completes) (MEDIUM).
 
 **Detection:** Steps missing after a reboot; Atera installs ran before network; stuck on "Getting ready"; `setupact.log` shows a different answer file than expected.
@@ -236,17 +236,17 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 
 **What goes wrong:** Windows can show a Wi-Fi link or Ethernet link while behind a captive portal, a filtered shop network, or a wrong clock. NCSI uses a plain-HTTP probe to a Microsoft host precisely so a gateway can intercept it (Microsoft, HIGH), so "connected" proves little about HTTPS reachability. A dead CMOS battery (common on used units) leaves the clock wrong, and TLS certificate validation then fails even though the network is fine (MEDIUM). A captive portal can answer HTTP 200 or 302 to anything.
 
-**Consequences:** Atera installed or uploads attempted when they cannot succeed; uploads recorded as sent; verification marked red for the wrong reason.
+**Consequences:** Atera install attempted when they cannot succeed; verification marked red for the wrong reason.
 
 **Prevention:**
-- Define "online" as: DNS resolves, a TLS handshake succeeds to the specific hosts the next step needs (for Atera at minimum its agent API host; for the central store its endpoint), and the response is the expected kind (any real HTTP status from the right host counts; an HTML portal page or a TLS error does not). Test the Atera hosts that the agent actually needs, including 443; optionally test 8883.
+- Define "online" as: DNS resolves, a TLS handshake succeeds to the specific hosts the next step needs (for Atera at minimum its agent API host), and the response is the expected kind (any real HTTP status from the right host counts; an HTML portal page or a TLS error does not). Test the Atera hosts that the agent actually needs, including 443; optionally test 8883.
 - Compare the HTTP `Date` header to the local UTC clock; warn when skew exceeds a few minutes and offer/perform a clock sync (`w32tm /resync`) before TLS-dependent steps; record the skew in the result.
 - Always set `[Net.ServicePointManager]::SecurityProtocol` to include TLS 1.2 at script start, and use short timeouts (5 to 10 s) with 3 retries and backoff.
-- Put the online check in one function used by every step (Atera, sync, auto-update) and cache the positive result for the shortest sensible window only.
+- Put the online check in one function used by every step (Atera, auto-update) and cache the positive result for the shortest sensible window only.
 
 **Detection:** Link shows connected but `Invoke-WebRequest` times out or errors with a TLS/clock message; `Date` header differs by hours or years.
 
-**Phase:** P5 (gate), P6 (sync).
+**Phase:** P5 (gate).
 
 ### Pitfall 13: Install media size and file-system limits (FAT32 4 GB)
 
@@ -268,7 +268,7 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 ### Pitfall 14: Secrets leaking via git history, results, logs, and artifacts
 
 **What goes wrong:** The repository "may be public or shared". Current history is tiny (two commits, no secret patterns found by a read-only `git log -G` scan other than docs text), but the new features add exactly the dangerous items.
-- The Atera MSI and its download link, central-store IDs/tokens (the existing uploader takes a Google Form ID and entry ID as parameters; those are write endpoints anyone can spam if they leak), BIOS password `.bin` files from `HpqPswd`, and Wi-Fi details.
+- The Atera MSI and its download link, BIOS password `.bin` files from `HpqPswd`, and Wi-Fi details.
 - `.gitignore` currently covers `HP_Staging/`, ISOs/WIMs/ESDs/SWMs and logs, but not `*.msi`, `*.bin`, `config*.local.*`, `results/`, `*.json` results, `.env`, `secrets/`, or `Tools/`/`Install/` stick mirror folders.
 - Logs and transcripts record command lines (MSI properties, tokens) and the typed Wi-Fi password if it is ever echoed. `firstboot.log` is ignored but a new transcript name may not be.
 - Deleting a secret from the repo does not remove it: history, forks, PR diffs, and caches keep it; revoke/rotate first, scrub later (git-filter-repo/BFG after rotation) (MEDIUM, consistent sources).
@@ -276,12 +276,12 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 
 **Prevention:**
 - Add a runtime config loader (`config.local.psd1` gitignored, or stick `config\`, or parameters) and a committed `config.example.psd1` with placeholders only.
-- Expand `.gitignore` now, before new files exist; add pre-commit and CI secret scan (gitleaks or similar) with a custom rule set for Atera URLs, Google Form `formResponse` IDs, and the `HpqPswd` password file names; test it with a canary secret.
+- Expand `.gitignore` now, before new files exist; add pre-commit and CI secret scan (gitleaks or similar) with a custom rule set for Atera URLs, and the `HpqPswd` password file names; test it with a canary secret.
 - Redact in a single logging function; transcripts are off by default or scrub-filtered.
 - Never put the BitLocker recovery key in the results schema that syncs; if needed it goes to a local-only file.
-- If anything leaks, rotate first (Atera token/link, form ID), then rewrite history.
+- If anything leaks, rotate first (Atera token/link), then rewrite history.
 
-**Detection:** Scanner hit; strings like `integratorLogin`, `formResponse`, `AccountId` in diff; unexpected files in `git status`.
+**Detection:** Scanner hit; strings like `integratorLogin`, `AccountId` in diff; unexpected files in `git status`.
 
 **Phase:** P1 (first), then every phase that adds a config value.
 
@@ -296,10 +296,10 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 - `Invoke-RestMethod` and `Invoke-WebRequest` on 5.1 need `-UseBasicParsing` for `Invoke-WebRequest` on machines where the IE first-run engine is not configured (stock Windows 11: usually fine but still add it).
 
 **Prevention:**
-- The short `irm` line fetches only a small bootstrap that downloads a pinned release (tag pointing at a commit SHA, or a release asset) plus a signed/hashed manifest (SHA-256), verifies hashes, then executes. The bootstrap pins; the manifest is updated by a deliberate release step, not by every push. Branch protection and 2FA on the repo.
+- The short `irm` line fetches a small bootstrap from `main` (no release or hash pinning, decided 2026-10-09), then executes it. Branch protection and 2FA on the repo.
 - Wrap the script body so it runs only if fully parsed: define `function Main { ... }` and call `Main` as the very last line; a truncated download then defines nothing harmful.
 - Use a custom short domain or a GitHub Pages short path under your control for the typed URL, not a public shortener.
-- Decide the web-route scope: online-only convenience for Assess/verify/sync; not for flashing or imaging (those must be stick-based and offline-capable).
+- Decide the web-route scope: online-only convenience for Assess/verify; not for flashing or imaging (those must be stick-based and offline-capable).
 - Fall back to the stick copy if the web fetch fails; record which version ran in the result.
 
 **Detection:** Different hash than the manifest; syntax error at line 1 with odd characters; works on one laptop and not another (TLS defaults).
@@ -309,26 +309,6 @@ Mistakes that cause rewrites, bricked or locked laptops, leaked secrets, or sile
 ---
 
 ## Moderate Pitfalls
-
-### Pitfall 16: Central store duplicates, ordering, and timezone
-
-**What goes wrong:**
-- Catch-up sync means the same result gets uploaded more than once (retries, two laptops, two sticks). Google Forms appends only and never updates; the existing uploader sends one pipe-joined text field with no run identifier and a local-time `yyyy-MM-dd HH:mm` with no zone (violates the ISO 8601 UTC requirement).
-- "Upload every result newer than what the store has" relies on timestamps. Laptop clocks are not trustworthy (dead CMOS, wrong zone at OOBE). A unit with a clock set to 2019 never looks "newer"; one set ahead looks newer forever.
-- Excel has no native ISO 8601 text parsing; paste leaves text. Power Query `DateTimeZone.FromText` parses `...Z` correctly (HIGH). Text ISO strings sort correctly only if every row uses the same fixed-width `Z` format.
-- Google Sheets/Forms records its own receive `Timestamp` in the spreadsheet's configured time zone; the form timestamp and the laptop UTC timestamp can be mistaken for each other (MEDIUM).
-- PS 5.1 `ConvertTo-Json` serializes `DateTime` as `\/Date(1234567890)\/` and truncates nested objects at depth 2 by default; `Get-Date -Format o` is local time with an offset, not `Z`; culture can change digits/calendar.
-- ISO timestamps contain colons and cannot be file names on Windows.
-
-**Prevention:**
-- Immutable result record with a `RunId` GUID, `Serial`, `ResultUtc` generated as `[DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)`, plus `ClockSkewSeconds` (from Pitfall 12) and schema version. Build JSON with pre-formatted strings, `-Depth 5`, written as UTF-8 without BOM.
-- Sync by set difference on `RunId` (what the store lacks), not on timestamp comparison. The store records its own server receive time and dedupes on `RunId`; the tracker takes the newest `ResultUtc` per `Serial` via Power Query (Group By, Max) and flags rows whose `ResultUtc` differs from server receive time by more than a day.
-- File names: `<serial>_<yyyyMMddTHHmmssZ>_<runid8>.json`, written to a temp name then renamed so a pulled stick never leaves a half-written file.
-- Set the Google Sheet time zone to UTC if Forms is chosen, and hide the form Timestamp column from the pull or use it only as receive time.
-
-**Detection:** Duplicate rows per serial/run; "newest" result is older than another; Excel shows text instead of datetimes; ordering flips after a laptop with a wrong clock uploads.
-
-**Phase:** P6.
 
 ### Pitfall 17: USB stick handling (FAT32 is fragile; the HP diagnostics installer erases it)
 
@@ -427,17 +407,15 @@ Further points:
 | P5 | FirstLogonCommands not sequenced or resumable; SetupComplete skipped on OEM key | Single orchestrator with state file; RunOnce/SYSTEM task; idempotent steps |
 | P5 | Blank-password side effects | Run as SYSTEM; keep `LimitBlankPasswordUse = 1`; test mechanism on build 26300; Splashtop credential option |
 | P5 | Atera started offline; "connected" is not online | Real HTTPS check to Atera hosts, clock-skew check, MSI timeout, retry |
-| P5 | Wi-Fi PSK left on delivered unit; autologon left on | Cleanup step after upload; verify removal |
-| P6 | Duplicates, wrong ordering, timezone/clock | `RunId` set difference; server receive time; fixed UTC format; Power Query Max per serial |
+| P5 | Wi-Fi PSK left on delivered unit; autologon left on | Cleanup step; verify removal |
 | P6 | BitLocker/Secure Boot state unknown at delivery | Verify reads encryption, Secure Boot, `UEFICA2023Status`, BIOS settings |
-| P7 | Branch-tracking auto-update; truncated `iex`; TLS defaults | Pin to release plus hash manifest; `Main` called last; set TLS 1.2; ASCII-only source |
+| P7 | Truncated `iex`; TLS defaults | `Main` called last; set TLS 1.2; ASCII-only source |
 
 ## Research Flags for Roadmap
 
 - P2 needs a hardware test on one 840 G5 and one 840 G6 before the layout is accepted; the exact menu text and which folder each BIOS version reads cannot be settled from documents alone. Find out which menu the five failed units used.
 - P4/P5 need a throwaway-VM-plus-real-hardware pass on build 26300: blank-password mechanism, OOBE local-account path, answer-file precedence, Secure Boot boot-manager variant.
 - P3 needs a check of what HP's catalog actually offers for `OSVer` 26H2 and for the G5 (Q78) family's latest BIOS and whether it includes the 2023 certificates.
-- P6 central-store choice is another researcher's scope; this file only constrains it (idempotent `RunId`, server receive time, no read secrets on laptops).
 - Other items are standard patterns that do not need separate research (exit-code tables, FAT32 split WIM, TLS 1.2, secret scanning).
 
 ## Sources
@@ -461,7 +439,6 @@ Further points:
 - Atera firewall settings and agent requirements https://support.atera.com/hc/en-us/articles/360015461139-Firewall-settings-for-Atera-s-integrations : MEDIUM (token prompt behaviour is as reported in PROJECT.md, not independently confirmed)
 - Splashtop support (blank password and Windows login requirement) https://support-splashtopbusiness.splashtop.com/hc/en-us/community/posts/207639043-No-password-on-remote-unit- : MEDIUM
 - DISM split-image for FAT32 (Microsoft WinPE single-USB doc, NinjaOne, others) https://learn.microsoft.com/hr-hr/windows-hardware/manufacture/desktop/winpe--use-a-single-usb-key-for-winpe-and-a-wim-file---wim?view=windows-11 : MEDIUM-HIGH
-- Power Query `DateTimeZone.FromText` https://learn.microsoft.com/en-us/powerquery-m/datetimezone-fromtext : HIGH
 - TLS 1.2 on PowerShell 5.1 and raw.githubusercontent.com caching (community threads): MEDIUM
 - Secret removal from git history (rotate first, scrub second): MEDIUM, consistent across sources
 - Local repo inspection (`src/Install-HPDriverBaseline.ps1`, `src/New-HPBaselineIso.ps1`, `src/HPDriverBaseline.psm1`, `src/Test-DeviceBaseline.ps1`, `.gitignore`, `git log`): HIGH for what the existing code does

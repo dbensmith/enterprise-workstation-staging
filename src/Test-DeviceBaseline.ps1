@@ -1,12 +1,11 @@
 # Unit audit: serial, spec, BIOS, OS, activation, Atera. Run as admin: irm <url> | iex
+[CmdletBinding()]
+param([string]$OutFile)  # not bound under irm | iex; use $env:PK_OUTFILE there
+if (-not $OutFile -and $env:PK_OUTFILE) { $OutFile = $env:PK_OUTFILE }
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Warning "Not running as Administrator. Some checks (WMI services, physical disk) may be restricted."
 }
-# --- Central log (Google Form). Leave blank to skip upload. ---
-$FormId = ''   # from form URL: docs.google.com/forms/d/e/<FormId>/viewform
-$Entry = ''   # from pre-filled link, e.g. entry.123456789
-
 # WMI must run (Atera and this script depend on it); some vendor images disable it
 Set-Service winmgmt -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service winmgmt -ErrorAction SilentlyContinue
@@ -276,36 +275,45 @@ foreach ($line in $lines) {
     }
 }
 
-# Upload one row to the Google Form (Sheet -> Excel can pull it)
-if ($FormId -and $Entry) {
-    $row = @((Get-Date -Format 'yyyy-MM-dd HH:mm'), $sn, $env:COMPUTERNAME, $modelDisplay, $cpuDisplayText, $ram, "$($disk.FriendlyName)", "$($disk.BusType)", $diskGB,
-        $scr, $biosText, $osText, $licMap[[int]$lic.LicenseStatus], $chan, $lic.PartialProductKey, $fwLast, $keyMatch,
-        $(if ($kms) { 'KMS' } else { '' }), $(if ($atera) { "$($atera.Status)" } else { 'None' }), $splashText,
-        (PF $specStatus), (PF $actOk), (PF $ateraOk)) -replace '\|', '/'
-    try {
-        Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Method Post -Uri "https://docs.google.com/forms/d/e/$FormId/formResponse" -Body @{ $Entry = ($row -join '|') } | Out-Null
-        Write-Host "Uploaded to central log." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Upload failed (no internet?) - USB/photo only." -ForegroundColor Yellow
+# Where to save the .txt: the stick this script ran from if it is removable, otherwise the removable drive
+# with the earliest letter (D: before E:). Fixed disks are never a default (e.g. when run from the web).
+$removable = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Removable' } | Sort-Object DriveLetter)
+$runRoot = if ($PSScriptRoot) { [string]$PSScriptRoot.Substring(0, 1) } else { $null }
+$usb = $removable | Where-Object { $runRoot -and $_.DriveLetter -eq $runRoot } | Select-Object -First 1
+if (-not $usb) { $usb = $removable | Select-Object -First 1 }
+$safeSn = ($sn -replace '[^\w\.-]', '_')
+$defaultOut = if ($usb) { "$($usb.DriveLetter):\results\$safeSn.txt" } else { $null }
+
+# -OutFile (or $env:PK_OUTFILE for irm | iex) answers the "save where?" question; a folder gets <serial>.txt inside it
+$target = $null
+if ($OutFile) {
+    $target = $OutFile
+} else {
+    $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and
+                   -not ([Environment]::GetCommandLineArgs() -contains '-NonInteractive')
+    if ($interactive) {
+        $hint = if ($defaultOut) { "Enter = $defaultOut" } else { 'no removable drive found' }
+        $answer = (Read-Host "Save results to a file? Type a path ($hint), or 'n' to skip").Trim().Trim('"')
+        if ($answer -match '^(n|no)$') { $target = $null }
+        elseif ($answer) { $target = $answer }
+        else { $target = $defaultOut }
+    } else {
+        $target = $defaultOut
     }
 }
 
-# Save to the first USB drive if present (supports Removable and Fixed USB drives)
-$usbDiskNumbers = @(Get-Disk -ErrorAction SilentlyContinue | Where-Object BusType -eq 'USB' | Select-Object -ExpandProperty Number)
-$usb = Get-Volume -ErrorAction SilentlyContinue | Where-Object {
-    $_.DriveLetter -and (
-        $_.DriveType -eq 'Removable' -or
-        ($usbDiskNumbers -contains (Get-Partition -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue).DiskNumber)
-    )
-} | Select-Object -First 1
-
-if ($usb) {
-    $dir = "$($usb.DriveLetter):\results"
-    New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
-    $safeSn = ($sn -replace '[^\w\.-]', '_')
-    $lines | Set-Content -Path (Join-Path $dir "$safeSn.txt") -Encoding UTF8 -Force
-    Write-Host "Saved: $dir\$safeSn.txt" -ForegroundColor Green
+if ($target) {
+    if ((Test-Path -LiteralPath $target -PathType Container) -or $target -match '[\/]$') {
+        $target = Join-Path $target "$safeSn.txt"
+    }
+    try {
+        $dir = Split-Path -Path $target -Parent
+        if ($dir) { New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null }
+        $lines | Set-Content -Path $target -Encoding UTF8 -Force -ErrorAction Stop
+        Write-Host "Saved: $target" -ForegroundColor Green
+    } catch {
+        Write-Host "Could not save to $target - photo the screen." -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "No USB drive found - photo the screen." -ForegroundColor Yellow
+    Write-Host "Not saved (no removable USB drive or save skipped) - photo the screen." -ForegroundColor Yellow
 }

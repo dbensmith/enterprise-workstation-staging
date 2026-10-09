@@ -1,7 +1,7 @@
 # Requirements: Enterprise Workstation Staging
 
 **Defined:** 2026-10-05
-**Core Value:** An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result reaches the central store even when the shop's internet is unreliable.
+**Core Value:** An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged laptop in the required order with minimal operator input, and a PASS result saved to the Tools stick.
 
 ## v1 Requirements
 
@@ -16,7 +16,7 @@
 
 ### Secrets
 
-- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (Atera MSI/link, store IDs or tokens)
+- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (Atera MSI/link)
 - [ ] **SEC-02**: Operator supplies secrets at run time via a gitignored local config, the Tools stick, or parameters; a committed `.example` config documents the schema
 - [ ] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
 
@@ -80,26 +80,21 @@
 
 ### Verify
 
-- [ ] **VERIFY-01**: Verify always runs last, after Atera and before upload
+- [ ] **VERIFY-01**: Verify always runs last, after Atera
 - [ ] **VERIFY-02**: Verify checks firmware is current, BIOS settings match profile defaults, driver errors, activation, account state, Atera and Splashtop
 - [ ] **VERIFY-03**: Verify records the disk sanitization method used (re-image)
 
-### Results & Sync
+### Results
 
 - [ ] **RES-01**: Every result carries an ISO 8601 UTC timestamp (e.g. `2026-10-05T10:02:00Z`), schema version and tool version
 - [ ] **RES-02**: Results are saved per serial to the Tools stick's `results` folder, one file per run
-- [ ] **RES-03**: Every run with internet uploads every result on the stick, for any laptop, that the central store lacks
-- [ ] **RES-04**: Upload is idempotent, keyed by serial plus UTC timestamp, so re-runs never create duplicates
-- [ ] **RES-05**: Laptops hold only a write-only (or capability) credential; any read credential stays on the operator's PC
-- [ ] **RES-06**: Sync failures show yellow and never block imaging or Verify
-- [ ] **RES-07**: Central store is chosen after research comparing the leak model, PS 5.1 support, cost, Excel pull and dedupe (leading candidates: Apps Script web app, Azure Blob with write-only SAS)
-- [ ] **RES-08**: Central store exposes a latest-per-serial view the Excel tracker can pull (desktop/web refresh)
 
 ### Web Bootstrap
 
-- [ ] **BOOT-01**: A short `irm <url> | iex` served from GitHub runs the provisioning script from a tagged release, not `main`
+- [ ] **BOOT-01**: A short `irm <url> | iex` served from GitHub runs the current provisioning script from `main` (no release tags, version pinning or hash pinning)
 - [ ] **BOOT-02**: Bootstrap falls back to the on-stick copy when offline
 - [ ] **BOOT-03**: The web route pulls only scripts, modules and profiles (no secrets, ISOs or BIOS files)
+- [ ] **BOOT-04**: The typed URL is as short as possible because operators type it by hand on laptops; the shortest workable form is a Phase 7 research priority (candidates: short repo/owner names, GitHub Pages, own short domain or redirect)
 
 ## v2 Requirements
 
@@ -110,8 +105,6 @@
 
 ### Hardening & Convenience
 
-- **HARD-01**: Bootstrap verifies the payload's SHA-256 against a pinned manifest
-- **HARD-02**: Background sync so the operator doesn't wait for upload
 - **HARD-03**: Condition grade (A/B/C) derived from battery wear, disk health, specs and lock flags
 - **HARD-04**: SSD secure-erase or crypto-erase with recorded evidence
 
@@ -119,18 +112,16 @@
 
 | Feature | Reason |
 |---------|--------|
-| Excel tracker workbook | Operator builds and owns it; project provides the store it pulls from |
+| Excel tracker workbook | Operator builds and owns it |
+| Central online results store, upload or sync of results | Out of scope (decided 2026-10-09); results stay on the Tools stick |
 | Automated pre-Windows firmware flash and BIOS defaults reset | Wish list; risks bricking; verify-only instead |
 | Storing the Wi-Fi password in the image or repo | Secrets constraint; typed at the setup network screen |
 | Module installs on target laptops | Targets are stock Windows |
 | PXE/MDT/SCCM imaging server | Needs a server and LAN at every shop; contradicts the two-stick model |
 | Autopilot hash registration | Needs tenant credentials on the laptop; not part of this flow |
 | Bypassing BIOS passwords, MDM locks or Absolute | Legal and security exposure; detect and recommend "do not buy" |
-| Uploading BitLocker keys, Wi-Fi keys or passwords to the store | Sensitive data in a lightly protected store |
-| Bidirectional sync from the tracker back to laptops | Conflicts and scope creep |
 | GUI front end | Phone-first operator; colour text menu is enough |
-| Auto-update from `main` without pinning | Supply-chain risk |
-| Mobile Excel refreshing queries | Excel on phones can't run Power Query; refresh on desktop/web, phone shows cached data |
+| Release tagging, version pinning or hash verification of the web bootstrap | Out of scope (decided 2026-10-09); the bootstrap tracks `main` |
 
 ## Traceability
 
@@ -190,19 +181,14 @@
 | VERIFY-03 | Phase 6 | Pending |
 | RES-01 | Phase 3 | Pending |
 | RES-02 | Phase 3 | Pending |
-| RES-03 | Phase 6 | Pending |
-| RES-04 | Phase 6 | Pending |
-| RES-05 | Phase 6 | Pending |
-| RES-06 | Phase 6 | Pending |
-| RES-07 | Phase 6 | Pending |
-| RES-08 | Phase 6 | Pending |
 | BOOT-01 | Phase 7 | Pending |
 | BOOT-02 | Phase 7 | Pending |
 | BOOT-03 | Phase 7 | Pending |
+| BOOT-04 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 63 total
-- Mapped to phases: 63
+- v1 requirements: 58 total
+- Mapped to phases: 58
 - Unmapped: 0 ✓
 
 ---

@@ -46,17 +46,11 @@ Research method note: the `gsd_run query research-plan` / `research-store` cache
 | `FirstLogonCommands` | n/a | Launch the single first-logon orchestrator | Runs after logon, before the desktop, elevated for an admin account, works with OEM keys. **Use this, not SetupComplete.cmd** | HIGH |
 | `Split-WindowsImage` | inbox (Dism module) | Split `install.wim` into `.swm` (e.g. `-FileSize 3800`) | Needed only if the Install stick is FAT32 | HIGH |
 
-### Results Store (see comparison below)
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| Google Apps Script web app bound to a Google Sheet (consumer Google account) | n/a | Central results store with write-key ingest, dedupe, latest-per-serial CSV | Only option that meets "no stored credentials on laptops", PS 5.1, zero cost and Excel pull together. Details and risks below | MEDIUM |
-
 ### Online Gate / Atera
 
 | Technology | Version | Purpose | Why | Confidence |
 |------------|---------|---------|-----|------------|
-| `Invoke-WebRequest -UseBasicParsing` plus `System.Net.Sockets.TcpClient` | inbox | Real reachability check for Atera and the store | Atera allow-list is documented (hosts below). `-UseBasicParsing` avoids the IE-engine dependency on a fresh Windows | MEDIUM-HIGH |
+| `Invoke-WebRequest -UseBasicParsing` plus `System.Net.Sockets.TcpClient` | inbox | Real reachability check for Atera | Atera allow-list is documented (hosts below). `-UseBasicParsing` avoids the IE-engine dependency on a fresh Windows | MEDIUM-HIGH |
 
 ---
 
@@ -196,42 +190,11 @@ Set `[Net.ServicePointManager]::SecurityProtocol = Tls12` explicitly. This also 
 
 ---
 
-## Central Results Store: Comparison and Decision
-
-Criteria: no stored credentials on laptops; PS 5.1; cost; Excel pull (desktop / web / mobile); newest-per-serial without duplicates; exposure if the URL leaks.
-
-Verified facts that shape the ranking:
-- **Excel for iPhone/Android cannot refresh external data connections or Power Query** (Microsoft guidance and Q&A, MEDIUM-HIGH). Mobile Excel only shows cached data. Excel for the web can refresh queries from supported sources (Text/CSV, JSON, XML, OData, SQL, SharePoint list, Excel; anonymous/basic/organizational auth selectable); whether the plain Web connector against an Apps Script URL refreshes in the browser is not documented, so test it (gap).
-- Power Automate's "When an HTTP request is received" trigger is a **premium** connector (diamond icon; needs Power Automate Premium/Process or per-flow license), unchanged in 2026 (MEDIUM-HIGH).
-- Azure Blob: SAS permission `c` (Create) allows writing a **new** blob; overwriting an existing blob needs `w` (Write) (MS REST docs). A create-only SAS on a container therefore cannot overwrite or read. `If-None-Match: *` on Put Blob gives conditional create (standard Azure behavior; MEDIUM, doc excerpt not retrieved). Power Query's Azure Blob connector supports SAS auth; Excel desktop works, mobile does not refresh.
-- Apps Script web apps always answer `doPost` with a 302 redirect; the client must follow it to get the JSON, and PowerShell's `Invoke-RestMethod`/`Invoke-WebRequest` follow it by default (MaximumRedirection 5). Deployment is "Execute as: Me, Who has access: Anyone". MEDIUM-HIGH.
-
-| Option | No creds on laptop | PS 5.1 | Cost | Excel desktop/web/mobile | Newest per serial, no dupes | Leak exposure | Verdict |
-|--------|--------------------|--------|------|--------------------------|-----------------------------|---------------|---------|
-| **Apps Script web app + Google Sheet** | Yes: a write key (shared secret) in the stick config, not an identity credential | `Invoke-RestMethod -Method Post` follows the 302 | Free | Desktop: Power Query From Web/CSV on `doGet?key=<readkey>`; web: test; mobile: no refresh, but the Sheet is live in the Sheets app | Server-side upsert on key `serial\|utcTimestamp` under `LockService`; a derived `Latest` tab; lexicographic compare works for ISO 8601 UTC | Write key leak = junk rows only (validate serial regex, schema allow-list, quarantine tab). Read key leak = all rows; keep read key off laptops | **RECOMMENDED** |
-| Azure Blob with create-only SAS (stored access policy) | Yes: SAS with `sp=c`, revocable via stored access policy | `Invoke-RestMethod -Method Put` with `x-ms-blob-type: BlockBlob`, `If-None-Match: *` | Cents/month; needs Azure subscription + card | Desktop Power Query combine-files and group-by newest; no mobile refresh | Idempotent by blob name `<serial>/<utc>.json` (409 = already exists = skip); latest computed in Power Query | Best leak profile: cannot read or overwrite | Strong runner-up if leak resistance outranks setup simplicity; more setup |
-| Google Form POST + linked Sheet | Yes (public form) | `Invoke-WebRequest` form-encoded, fragile `entry.NNN` IDs | Free | Needs the Sheet published to web as CSV for Excel, which makes all data readable by anyone with that link | Append-only; dedupe by formula | Public CSV link exposes everything | Not recommended |
-| Power Automate HTTP trigger to Excel/SharePoint | URL contains signature | POST works | Premium license | Best native Excel incl. mobile (data physically in the workbook) | Flow upsert possible | Anyone with URL can trigger; regenerate key to revoke | Only if premium is already licensed; the one route that keeps mobile Excel live |
-| Graph to OneDrive/SharePoint Excel | Needs app secret or device-code login on laptop | Doable, token handling in 5.1 | M365 | Native | Table row ops, messy concurrency | Tenant credential on laptop | Rejected (violates no-creds) |
-| Microsoft Forms / Lists | Forms has no supported public submit API; Lists needs Graph auth | Poor | M365 | Native | Append only | n/a | Rejected |
-| Airtable (`performUpsert`) | Scoped PAT (write-only possible) | `Invoke-RestMethod` bearer | Free tier record cap | Power Query with auth header on desktop | Native upsert | Token leak lets writes (read if scoped) | Viable, but a PAT is a real credential; worse than the above |
-| Private GitHub repo files / cloud bucket keys | PAT or access keys on laptop | Works | Free | Awkward | Commit conflicts under concurrent runs | High-blast-radius token | Rejected |
-
-**Decision:** Apps Script + Sheet, with this contract (design shape, MEDIUM):
-- `POST {action:"missing", keys:["SER|2026-10-05T10:02:00Z", ...]}` returns the keys the store lacks. Needs only the write key, so catch-up sync does not require a read credential and does not re-upload everything.
-- `POST {action:"put", records:[...]}` upserts into append-only `Runs` (key = `serial|utc`), then updates `Latest` per serial only if the new UTC string is greater.
-- `GET ?key=<readkey>&view=latest` returns CSV for Excel; the read key lives only on the operator's PC.
-- Keys live in Script Properties (never in the repo); the script URL and write key reach laptops via the gitignored local config or the Tools stick; rotate by redeploying.
-- Run the owner as a consumer Google account; a managed Workspace account may block "Anyone" deployments (verify).
-- **Decision for the user to confirm:** "Excel (incl. mobile) refresh" is not achievable with any no-credential store, because mobile Excel cannot refresh. If live data in mobile Excel is a hard requirement, the only paths are a Microsoft-side writer (Power Automate premium) or a credential on a device. Otherwise phone viewing is via the Sheets app and Excel refresh happens on desktop/web.
-
----
-
 ## Secrets and Repository Hygiene
 
 | Item | Choice | Notes |
 |------|--------|-------|
-| Local scanning | pre-commit with `gitleaks` hook at `rev: v8.30.1`; local equivalent `gitleaks git --pre-commit --staged` | Add a project `.gitleaks.toml` (extend defaults) with custom rules: Apps Script URL `script.google.com/macros/s/...`, Azure SAS `sig=`/`sv=`, Atera installer URL and `IntegratorLogin`/`CompanyId`/`AccountId` MSI properties, Wi-Fi `<keyMaterial>`, `net user ... <password>` patterns |
+| Local scanning | pre-commit with `gitleaks` hook at `rev: v8.30.1`; local equivalent `gitleaks git --pre-commit --staged` | Add a project `.gitleaks.toml` (extend defaults) with custom rules: Atera installer URL and `IntegratorLogin`/`CompanyId`/`AccountId` MSI properties, Wi-Fi `<keyMaterial>`, `net user ... <password>` patterns |
 | CI | GitHub Actions step that downloads the pinned gitleaks release binary, verifies its checksum, and runs `gitleaks git` | **Do not use `gitleaks/gitleaks-action` for an organization-owned repo**: it needs a license key for organizations (personal accounts are exempt). The CLI is MIT and free. HIGH |
 | One-time history scan | `gitleaks git` over full history before the repo is made public or shared | The requirement covers history, not just the working tree. The repo was previously not a git repo (environment now reports git), so the scan is cheap now and expensive later |
 | Platform scanning | Enable GitHub secret scanning with push protection if available for the repo tier | Backstop only |
@@ -244,9 +207,9 @@ Verified facts that shape the ranking:
 
 - Windows PowerShell 5.1 has the `irm` and `iex` aliases. Force TLS 1.2 first. Use `Invoke-RestMethod`, which does not depend on the IE engine; if `Invoke-WebRequest` is ever used on a fresh Windows, add `-UseBasicParsing`. HIGH.
 - A short bootstrapper must come from `raw.githubusercontent.com`, which works anonymously only for a **public** repo (a private raw URL needs a token, which violates the no-credentials constraint). The project must therefore decide that the repo is public, or accept stick-only distribution. HIGH.
-- Pin to a tag or commit SHA in the URL (`.../<tag>/bootstrap.ps1`), not `main`; raw content is cached by GitHub's CDN for minutes, so a "fix" on `main` is not instantly visible. MEDIUM.
-- Bootstrapper behavior: tiny (under ~50 lines), downloads the tagged release zip (`https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.zip`) to `%TEMP%`, verifies a SHA-256 published in the *release notes or a separate signed manifest* (a hash in the same repo adds no trust), extracts, then runs the script from disk. Check for a newer tag via `https://api.github.com/repos/<owner>/<repo>/releases/latest` (unauthenticated limit is about 60 requests/hour per IP, and a shop NAT shares it, so cache the answer and fall back silently to the on-stick copy).
-- **Web route may pull:** scripts, modules, vendor-module code, profile `.psd1` files, small manifests. **Must not pull:** drivers, BIOS binaries, ISO, Atera MSI/link, store URL/keys (vendor licensing, size, and secrets). HP softpaqs are fetched from HP's own CDN with the SHA-256 in the manifest. MEDIUM.
+- Serve the bootstrap from `main` (no tag or commit pinning). Raw content is cached by GitHub's CDN for minutes, so a "fix" on `main` is not instantly visible. MEDIUM.
+- Bootstrapper behavior: tiny (under ~50 lines), fetches the current scripts from `main` to `%TEMP%` or runs them in memory, then runs from disk; no release tags, no SHA-256 verification of the payload. Offline or on any failure it falls back silently to the on-stick copy.
+- **Web route may pull:** scripts, modules, vendor-module code, profile `.psd1` files, small manifests. **Must not pull:** drivers, BIOS binaries, ISO, Atera MSI/link (vendor licensing, size, and secrets). HP softpaqs are fetched from HP's own CDN with the SHA-256 in the manifest. MEDIUM.
 - AV/EDR may flag a download-and-`iex` cradle; test on a stock Defender-on machine. LOW.
 
 ---
@@ -262,16 +225,14 @@ Verified facts that shape the ranking:
 | Pester | 6.2.0 | 5.x, inbox 3.4.0 | 6.x supports 5.1 and is current; 3.4.0 is obsolete and conflicts |
 | Secret scan CI | gitleaks CLI | `gitleaks-action` | License key needed for organization repos |
 | Dell driver source | DriverPackCatalog.cab + vendor packs | DCU on the target | DCU 5.7.2 needs .NET Desktop Runtime 10 not present on stock Windows |
-| Results store | Apps Script + Sheet | Azure Blob create-only SAS | Both viable; Apps Script is free and simpler; Blob has the better leak profile (revisit if the sticks are expected to be lost) |
 | BIOS reset to defaults | Manual F9/F10 plus WMI verify (out of scope to automate) | HPCMSL `Set-HPBIOSSettingDefaults` on targets | Would need the module on the target; if the user later accepts carrying HPCMSL via `Save-Module` on the Tools stick and `Import-Module` from that path, it is not a module install, but it is a decision to confirm |
 
 ## What NOT to Use
 
 - **`SetupComplete.cmd`** as the only post-setup hook (silently skipped with OEM keys).
 - **`net user User *`** (interactive) and **`wmic`** (being removed from Windows 11 images; use CIM).
-- **`irm https://.../main/... | iex`** unpinned, or from a private repo.
+- **Private repo** as the bootstrap source (raw URLs then need a token).
 - **`gitleaks-action`** on an organization repo; deprecated `gitleaks detect`/`protect` forms.
-- **Graph/OneDrive writes, Microsoft Forms, Power Automate HTTP trigger (unless premium is already owned), repo-as-database, long-lived PATs** as the results store; **Google Form + published CSV** as the primary store (public CSV link).
 - **Installing HPCMSL or Pester on target laptops** (project constraint); builder only.
 - **Dell Command | Update on stock targets** (needs .NET Desktop Runtime 10).
 - **Flat-copying both G5 and G6 packs into one folder** where INF names collide.
@@ -297,7 +258,6 @@ Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force
 2. Exact `sp167305` output tree on a `HP_TOOLS` USB and that F2 shows 10.8.4.0 on both models.
 3. G5 vs G6 softpaq diff via `New-HPDriverPack -WhatIf` for `83B2` and `8549`; valid `-OSVer` for a 26H2 image from `Get-HPDeviceDetails -OSList`.
 4. Blank-password `User` survives two reboots and manual sign-in on a 26H2 install (steps 3-5 above).
-5. Apps Script: `doPost` 302 behavior from PS 5.1, Excel for the web refresh of the Web connector, consumer vs Workspace account deployment limits.
 6. Secure Boot boot from a FAT32 split-WIM Install stick; DISM mount of a 26300 image on a 26200 builder.
 7. Whether a newer gitleaks or Diagnostics UEFI than the versions above exists at build time (these were the latest found 2026-10-05).
 
@@ -324,8 +284,6 @@ MEDIUM
 - Atera firewall settings (via search summary; page 403 to fetch): https://support.atera.com/hc/en-us/articles/360015461139-Firewall-settings-for-Atera-s-integrations
 - Dell Command | Update 5.x release notes and CLI search results: https://www.dell.com/support/manuals/en-us/command-update/dcu_rn/release-summary?guid=guid-0ff2b3c9-7e82-4561-8e09-4227ce140212&lang=en-us
 - Public report of the expired-blank-password / `net accounts /maxpwage:unlimited` in `specialize`: https://github.com/a11ign/a11ign/issues/1933 ; Microsoft Q&A on FirstLogon timing and secedit: https://learn.microsoft.com/en-us/answers/questions/1347161/set-password-never-expires-for-a-local-user-in-the
-- Apps Script 302 behavior: https://dev.to/googleworkspace/youre-probably-using-curl-wrong-with-your-google-apps-script-web-app-1ed8
-- Power Query in Excel for the web: https://support.microsoft.com/en-us/office/use-power-query-in-excel-for-the-web-02652946-de70-48d8-8a34-3db96998ff5a
 - gitleaks-action license rule and deprecated commands: https://github.com/gitleaks/gitleaks-action ; https://github.com/Chris-Wolfgang/repo-template/pull/548
 - BiosSledgehammer (HpFirmwareUpdRec `-s -r -b -p` usage): https://github.com/texhex/BiosSledgehammer
 

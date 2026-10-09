@@ -21,7 +21,6 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 - PSScriptAnalyzer 1.25.0 (no suppressions per policy)
 - gitleaks v8.30.1 (MIT, pre-commit + CI)
 - HP Platform IDs: G5 = 83B2 (Q78 BIOS), G6 = 8549 (R70 BIOS)
-- Central store: Google Apps Script + Sheet (free, idempotent upsert)
 
 **Confidence:** HIGH for versioning. MEDIUM for 26H2 OS support with HP catalogs.
 
@@ -32,7 +31,6 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 - Enforced stage order with state resumption
 - Firmware staging in exact vendor layout (HP F10/DEVFW paths)
 - Online gate before Atera (real HTTPS to Atera endpoints)
-- Idempotent results sync (server-side upsert by serial+timestamp)
 
 ### Critical Pitfalls & Prevention
 
@@ -60,9 +58,9 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 
 5. **Phase 5: First-Logon** — Stage engine, online gate, LocalAccount, FirmwareGate, Atera stage, console output. Research: FirstLogonCommands on 26300; BitLocker suspension depth.
 
-6. **Phase 6: Verification & Store** — Result schema, check expansion, sync algorithm, store adapter. Research: Apps Script PS 5.1 compatibility.
+6. **Phase 6: Verification** — Result schema, check expansion.
 
-7. **Phase 7: Bootstrap** — Bootstrap stub, release packaging, short URL. Research: None.
+7. **Phase 7: Bootstrap** — Bootstrap stub (tracks main), short URL. Research: shortest typeable URL.
 
 8. **Phase 8 (v2+): Dell/Lenovo** — Deferred. Needs catalog research, hardware bench per vendor.
 
@@ -74,7 +72,6 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 - **Phase 3:** MEDIUM-PRIORITY — HP catalog gaps, G5 latest BIOS.
 - **Phase 4:** VM BENCH + HARDWARE TEST — blank-password on 26300, FAT32 boot with Secure Boot ON.
 - **Phase 5:** HARDWARE BENCH (optional) — Atera MSI timeout realism.
-- **Phase 6:** APPS SCRIPT RESEARCH — PS 5.1 compatibility; if negative, pivot to Azure Blob.
 
 ## Confidence Assessment
 
@@ -87,19 +84,17 @@ This toolkit solves intake testing and imaging of refurbished laptops with zero 
 | USB layouts | MEDIUM | HP SoftPaq HIGH; folder variants MEDIUM (conflicting); bench verification flagged |
 | First-logon | MEDIUM | Microsoft docs HIGH; mechanisms need VM bench |
 | Online gate | MEDIUM | Atera docs MEDIUM-HIGH; timeout inference MEDIUM |
-| Store options | MEDIUM | Apps Script basics HIGH; PS 5.1 redirect not bench-verified |
 
-**Overall: MEDIUM-HIGH.** Foundations solid; architecture testable; hardware/Apps Script unknowns are phase-level research tasks, not roadmap blockers.
+**Overall: MEDIUM-HIGH.** Foundations solid; architecture testable; hardware unknowns are phase-level research tasks, not roadmap blockers.
 
 ### Gaps to Address (Phase-Level Research)
 
 1. HP USB layouts (Phase 2) — Bench test on real G5/G6
-2. Apps Script PS 5.1 (Phase 6) — Test doPost 302, LockService, Excel Power Query
-3. Blank-password autologon on 26300 (Phase 5) — VM bench two reboots
-4. G5 latest BIOS and 2023 certs (Phase 3) — Confirm sp157750, certificate inclusion
-5. DISM union tolerance (Phase 4) — Confirm /Add-Driver /Recurse exit codes
-6. FAT32 split-WIM boot (Phase 4) — Hardware test on G5/G6 with Secure Boot ON
-7. Atera MSI properties (Phase 5) — Hardware bench on stock Windows
+2. Blank-password autologon on 26300 (Phase 5) — VM bench two reboots
+3. G5 latest BIOS and 2023 certs (Phase 3) — Confirm sp157750, certificate inclusion
+4. DISM union tolerance (Phase 4) — Confirm /Add-Driver /Recurse exit codes
+5. FAT32 split-WIM boot (Phase 4) — Hardware test on G5/G6 with Secure Boot ON
+6. Atera MSI properties (Phase 5) — Hardware bench on stock Windows
 
 All phase-level, not blockers.
 
@@ -109,7 +104,7 @@ All phase-level, not blockers.
 
 **Status: SYNTHESIS COMPLETE**
 
-All four research files synthesized. Incident fix isolated and safe. Architecture sound. Confidence MEDIUM-HIGH. Hardware/Apps Script gaps are phase-level research tasks with clear success criteria; not roadmap blockers.
+All four research files synthesized. Incident fix isolated and safe. Architecture sound. Confidence MEDIUM-HIGH. Hardware gaps are phase-level research tasks with clear success criteria; not roadmap blockers.
 
 **Recommendation:** APPROVED for roadmap planning.
 

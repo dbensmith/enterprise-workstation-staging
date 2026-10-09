@@ -16,7 +16,7 @@ Confidence tiers were assigned by hand: the `research-plan` / `classify-confiden
 | `Build-HPDriverBaseline.ps1` | HP **build-plane** script. Installs HPCMSL from the Gallery on the builder, one profile in, one package out (`<root>\<platform>-<os>-<release>`), writes `manifest.json`, copies `Install-HPDriverBaseline.ps1` into the package | This is the HP implementation of "build custom pack" + "fetch firmware". Package dir naming is vendor-less and model-less: collides the moment a second vendor or model appears. |
 | `Install-HPDriverBaseline.ps1` | **Target-plane**, deliberately standalone (copied into every package/image), pnputil online or DISM offline, runs firmware silent installs from manifest (`SilentInstall`, `ReturnCodes`, `Devices`), suspends BitLocker | The manifest is already ~vendor-neutral data (command line, return-code map, device IDs). A vendor-neutral install *engine* driven by the manifest is feasible; only BIOS-version parsing and BitLocker policy are HP-ish. |
 | `New-HPBaselineIso.ps1` | Neutral ISO servicing (mount, copy, DISM inject, export, IMAPI2 ISO) with an HP-shaped first-boot hook (`unattend.xml` specialize pass `RunSynchronous`, installs to `C:\HP\Baseline`) | Keep the servicing code. Replace the hook with a generated, testable answer file (specialize + oobeSystem) that launches the neutral first-logon pipeline. |
-| `Test-DeviceBaseline.ps1` | Flat `irm \| iex` script: gathers data, applies hard-coded G5/G6/Dell/Lenovo rules, prints, uploads one Google-Form row, writes `<serial>.txt` to "first USB volume" | Becomes the **Verify/Assess check library**. Needs: checks as objects, JSON result, UTC timestamps, vendor knowledge moved to profiles/modules, stick discovery by marker not "first USB volume" (the operator has two sticks). |
+| `Test-DeviceBaseline.ps1` | Flat `irm \| iex` script: gathers data, applies hard-coded G5/G6/Dell/Lenovo rules, prints, writes `<serial>.txt` to "first USB volume" | Becomes the **Verify/Assess check library**. Needs: checks as objects, JSON result, UTC timestamps, vendor knowledge moved to profiles/modules, stick discovery by marker not "first USB volume" (the operator has two sticks). |
 | `profiles/hp-elitebook-840-g6.psd1` | Data-only profile (`Name, Platform, Os, OsVer, DriverExclude, FirmwareExclude`) | Right pattern. Extend, do not replace. Move under `profiles/<vendor>/`. |
 | `HPDriverBaseline.Tests.ps1` | Pester, AST-extraction trick to test functions inside standalone scripts | Good technique, reuse it. But see defects below. |
 
@@ -45,14 +45,14 @@ The six vendor operations split cleanly by *where they can run*. This is the mos
 |   ListModels / GetVendorPack / NewCustomPack / GetFirmware  |       |                                                               |
 |   -> ISO build (servicing, inject union of drivers,         |       |   Stage engine (ordered table, state.json, Verify-last)        |
 |      generated unattend + first-logon hook)                 |       |    Identify > Assess checks > Firmware gate > Account >       |
-|   -> Publish-Sticks (writes + VALIDATES stick layouts)      |       |    Drivers > Online gate > Atera > [Verify] > Persist > Sync   |
+|   -> Publish-Sticks (writes + VALIDATES stick layouts)      |       |    Drivers > Online gate > Atera > [Verify] > Persist  |
 +---------------+---------------------------------------------+       +-----------+----------------------------------+--------------------+
                 |  uses                                                           | uses                             | reads/writes
                 v                                                                 v                                  v
 +-------------------------------------------------------------------------------------------------------------------------------+
 | CORE module (vendor-neutral, no vendor tools, Pester-testable offline)                                                         |
 |  Output(green/yellow/red) | Clock(UTC, skew) | Native wrapper | Config+Secrets | Stick discovery | Result record+validator       |
-|  Store adapter seam + Sync | Online probe | Layout validator | Hash/manifest | Unattend generator | ISO servicing (IMAPI2)       |
+|  Online probe | Layout validator | Hash/manifest | Unattend generator | ISO servicing (IMAPI2)       |
 +-------------------------------------------------------------------------------------------------------------------------------+
         |                                    |
         v                                    v
@@ -65,9 +65,9 @@ The six vendor operations split cleanly by *where they can run*. This is the mos
         |
         v
 +--------------------------------------------+        +--------------------------------------------+
-| profiles/<vendor>/<model>.psd1  (data)     |        | Central store (adapter-selected, TBD by    |
-| local config (gitignored) / stick config   |        | store research) <- write from laptops,     |
-| (secrets, Atera link, store URL/token)     |        |   read by Excel tracker (not our code)     |
+| profiles/<vendor>/<model>.psd1  (data)     |
+| local config (gitignored) / stick config   |
+| (secrets, Atera link)                      |
 +--------------------------------------------+        +--------------------------------------------+
 ```
 
@@ -75,16 +75,15 @@ The six vendor operations split cleanly by *where they can run*. This is the mos
 
 | Component | Responsibility | Talks to | Must NOT |
 |-----------|----------------|----------|----------|
-| `core` module | All vendor-neutral logic: output, clock, native-command wrapper, config/secrets, stick discovery, result schema + validator, store seam + sync, online probe, layout declare/validate, unattend generator, ISO servicing | Windows APIs (CIM, file system, HTTPS), vendor modules via descriptor | Import any vendor tool (HPCMSL) or mention a vendor by name |
+| `core` module | All vendor-neutral logic: output, clock, native-command wrapper, config/secrets, stick discovery, result schema + validator, online probe, layout declare/validate, unattend generator, ISO servicing | Windows APIs (CIM, file system, HTTPS), vendor modules via descriptor | Import any vendor tool (HPCMSL) or mention a vendor by name |
 | Vendor module `Build.psm1` | Catalog queries, downloads, pack/firmware build, firmware USB layout declaration | Vendor web/tools (HPCMSL) on builder only | Be loaded on a target laptop |
 | Vendor module `Target.psm1` | Identify device, installed firmware version, install drivers/firmware from a pack on stock Windows | CIM/WMI, `pnputil`, vendor flash exe | Require a module install, internet, or HPCMSL |
 | `vendor.psd1` | Descriptor: name, manufacturer match regex, op-to-command map, capabilities, supported OS | core registry | Contain logic |
 | Profiles (`.psd1`) | Per-model data: platform IDs, neighbour group, excludes, firmware minimums, expected BIOS settings, check thresholds | build + checks | Contain secrets |
 | `Build-Kit.ps1` | Master build orchestration, interactive selection, ISO flow, publish | core, vendor Build modules | Run on target |
-| `Provision.ps1` + stage engine | Single pipeline for Assess/Deploy/FirstLogon; enforces order | core, vendor Target modules, store adapter | Contain stage logic inline (stages are functions registered in a table) |
-| Check library (`checks/`) | One function per verification check returning a check object | core, vendor Target | Print, upload, or decide verdict |
+| `Provision.ps1` + stage engine | Single pipeline for Assess/Deploy/FirstLogon; enforces order | core, vendor Target modules | Contain stage logic inline (stages are functions registered in a table) |
+| Check library (`checks/`) | One function per verification check returning a check object | core, vendor Target | Print or decide verdict |
 | Bootstrap stub | ~40 lines: TLS, elevate, find stick, fetch+verify release, launch | GitHub, stick | Hold logic, secrets, or ids |
-| Store adapter | `Test-Store`, `Send-StoreResult`, optional `Get-StoreLatest` | core sync only | Be called from stages (sync only) |
 | Publisher (`Publish-Sticks.ps1`) | Copy build output into the two stick layouts then re-read and validate | core layout validator, vendor layout declarations | Hand-write vendor paths (paths come from vendor `Get-FirmwareStickLayout`) |
 
 ### 2.3 Data flow
@@ -98,10 +97,9 @@ The six vendor operations split cleanly by *where they can run*. This is the mos
  [image]               Install stick -> Windows Setup (Wi-Fi typed at OOBE network screen)
  [first logon]         C:\ProvisionKit\ (baked in image) + Tools stick (config, results)
                        state.json (local) --> stages --> result.json (Tools stick \results + C:\ProgramData)
- [sync]                Tools stick \results\*.json --(adapter, idempotent put)--> central store --> Excel tracker (pull)
 ```
 
-Direction rules: build-plane writes data, target-plane only reads it; results flow one way (laptop/stick to store); store never writes back (matches the anti-feature "bidirectional sync"). Secrets flow only from builder-local gitignored config or the Tools stick to the running process; never into repo, image, or result records.
+Direction rules: build-plane writes data, target-plane only reads it; results are written to the Tools stick only. Secrets flow only from builder-local gitignored config or the Tools stick to the running process; never into repo, image, or result records.
 
 ---
 
@@ -165,9 +163,8 @@ Adding Dell/Lenovo = new `vendors/<name>/` folder with a descriptor, two modules
 |- Publish-Sticks.ps1             copy + validate the two stick layouts
 |- bootstrap/Start.ps1            the tiny irm|iex stub
 |- core/                          ProvisionKit.Core.psd1/.psm1 (+ private/*.ps1 dot-sourced)
-|   |- Output.ps1 Clock.ps1 Native.ps1 Config.ps1 Stick.ps1 Online.ps1 Result.ps1 Sync.ps1
+|   |- Output.ps1 Clock.ps1 Native.ps1 Config.ps1 Stick.ps1 Online.ps1 Result.ps1
 |   |- Layout.ps1 Unattend.ps1 IsoServicing.ps1 Engine.ps1 Hash.ps1
-|   `- store/ FolderStore.psm1 (tests/dev) + <chosen>.psm1
 |- vendors/
 |   |- hp/ vendor.psd1 HP.Build.psm1 HP.Target.psm1 layouts/hp-usb-flash.layout.psd1
 |   `- _template/                 skeleton + README, excluded from contract run
@@ -241,12 +238,12 @@ $Stages = @(
   @{ Order=70; Name='Atera';          Kind='Mutating'; Modes='Deploy';          Online=$true;  OnFail='Defer'; Requires='Gate.Atera' }
 )
 # Terminal phase, NOT in the table, always runs last, even if a stage threw:
-#   Verify (ReadOnly) -> Persist (writes result JSON only) -> Sync (network, never fails the run)
+#   Verify (ReadOnly) -> Persist (writes result JSON only)
 ```
 
 Enforcement points (each gets a Pester test):
 - **Assess read-only:** the engine refuses to invoke any `Kind='Mutating'` stage in Assess; additionally an AST allow-list test scans Assess-reachable functions for forbidden commands (`Set-*`, `Add-*`, `Remove-*`, `Start-Process`, `pnputil`, `net`, writes outside the results path). The existing tests already use the AST-extraction technique.
-- **Verify always last:** `try { run stages } finally { Verify; Persist; Sync }`; failure in a stage becomes a recorded status, not an early exit.
+- **Verify always last:** `try { run stages } finally { Verify; Persist }`; failure in a stage becomes a recorded status, not an early exit.
 - **Resumable:** `C:\ProgramData\ProvisionKit\state.json` records per-stage `{status, attempts, lastUtc}`; stages are idempotent; a re-run skips `Pass` stages. Reboots (driver, rename) re-enter via the same entry with `-Resume`.
 - **Pre-Windows steps cannot be scripted** (flash, defaults reset, UEFI diagnostics are manual per PROJECT.md). The engine can only *observe* them: installed BIOS vs profile minimum, key BIOS settings via WMI read (HP: `HP_BIOSSetting`; bulk reset exists only in HPCMSL and is not available on targets), plus operator attestations captured as `manual.*` fields in the record (diagnostics pass/fail prompt at first logon).
 
@@ -269,7 +266,6 @@ Two sticks, two roles. **Discover sticks by marker file, never by "first USB vol
      kit\                         core, vendors, profiles, checks, bootstrap, Provision.ps1, kit.json (version + hashes)
      firmware\hp\<platform>\      firmware-manifest.json + Windows flash tool (fallback source of truth)
      config\site.psd1             gitignored secrets/config, copied by the builder
-     sync\<storeId>.ledger.json   cache of uploaded resultIds (see section 9)
      logs\
   Start.cmd                       self-elevating launcher: powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ProvisionKit\kit\Provision.ps1" %*
 ```
@@ -309,7 +305,7 @@ Answer file is **generated** (`New-KitUnattend -Features ...` in core), parsed a
 ### 8.2 Sequence (inside the single visible console)
 
 ```
- 1 Pre-flight      elevated? start transcript (redacting secrets); load config; find Tools stick by marker; if absent -> results go to C:\ProgramData only, sync later
+ 1 Pre-flight      elevated? start transcript (redacting secrets); load config; find Tools stick by marker; if absent -> results go to C:\ProgramData only
  2 Identify        vendor module GetDeviceIdentity; profile lookup by (vendor, platformId); unknown platform -> WARN, generic checks only
  3 -- OFFLINE PHASE (no network needed) ---------------------------------------------
    LocalAccount    ensure User exists, blank password, no forced change, no expiry (mechanism: see 8.3)
@@ -317,17 +313,16 @@ Answer file is **generated** (`New-KitUnattend -Features ...` in core), parsed a
    (record)        clock sanity: local UTC vs trusted source if any
  4 -- ONLINE GATE ---------------------------------------------------------------------
    Wait-Online     real HTTPS request to the Atera endpoint (any HTTP response = reachable; TLS/DNS/timeout = not), poll 5-10 s, bounded wait (config, default a few minutes), operator hotkey to skip; show countdown line
-   gate result     recorded in the result: { atera: ok|no, store: ok|no, clockSkewSeconds, probedUtc }
+   gate result     recorded in the result: { atera: ok|no, clockSkewSeconds, probedUtc }
  5 Atera           ONLY if gate.atera ok. Silent install with customer-specific properties from config; hard timeout; then check service AteraAgent Running. Gate not ok -> status Deferred (WARN), installer never launched
  6 Verify          all checks, including Atera (and Splashtop as info: pushed after first check-in, may lag -> WARN not FAIL)
  7 Persist         write immutable result JSON: Tools stick \results\ AND C:\ProgramData\ProvisionKit\results\
- 8 Sync            if store gate ok: upload (section 9). Else Deferred. Never changes the verdict
 ```
 
 Gate rules (each testable):
 - **No Atera launch without a passing gate in the same run.** Enforced inside the Atera stage function (precondition), not only by stage order, so the manual path cannot bypass it.
 - **"Connected" is not online.** NLA/`Test-NetConnection` to anything is insufficient (captive portals, dead uplinks). Because the probe is HTTPS to the real host, a captive portal produces a TLS name mismatch exception and correctly counts as not reachable. Atera documents outbound TCP 443/8883 and hosts such as `agent-api.atera.com` (HIGH, from FEATURES.md research).
-- **Gate per destination.** Atera and the store are different hosts; one `Test-Endpoint` helper, two named probes.
+- **Gate per destination.** One `Test-Endpoint` helper with a named probe for Atera.
 - **Clock is part of "online".** Used laptops with a dead CMOS battery have wrong dates; TLS validation then fails and `runUtc` is wrong. The probe reads the HTTP `Date` header, computes skew, tries `w32tm /resync` when skew exceeds a threshold, and records `clock.skewSeconds` and `clock.trusted`. Result timestamps use `local UTC + measured offset` when a probe succeeded. (Engineering judgement, MEDIUM; high payoff, ties directly to the "newer than the store" sync rule.)
 - **Always force TLS 1.2** on Windows PowerShell 5.1 before any web call (existing build script already does for the Gallery).
 
@@ -337,11 +332,11 @@ Evidence (LOW-MEDIUM, one GitHub issue plus Microsoft Q&A): blank `Password/Valu
 
 ---
 
-## 9. Result record, sync, and the store seam
+## 9. Result record
 
 ### 9.1 Record schema (v1) - immutable, one file per run
 
-File name: `<serial-sanitized>_<yyyyMMddTHHmmssZ>.json` (filesystem-safe, sortable). Never edited after write; sync state lives elsewhere.
+File name: `<serial-sanitized>_<yyyyMMddTHHmmssZ>.json` (filesystem-safe, sortable). Never edited after write.
 
 ```json
 {
@@ -355,7 +350,7 @@ File name: `<serial-sanitized>_<yyyyMMddTHHmmssZ>.json` (filesystem-safe, sortab
   "tool": { "kitVersion": "1.0.0", "source": "stick|web|image", "profile": "hp/elitebook-840-g6@1", "packBuild": "8549-win11-24H2@2026-10-04T18:00:00Z", "packKind": "custom" },
   "device": { "vendor": "HP", "model": "HP EliteBook 840 G6", "platformId": "8549", "serial": "5CG1234ABC",
               "biosVersion": "R70 Ver. 01.36.00", "cpu": "Intel Core i5-8365U", "ramGB": 16, "disk": { "bus": "NVMe", "sizeGB": 238 }, "osBuild": "26300.9457" },
-  "gates": { "atera": "ok", "store": "no", "probedUtc": "2026-10-05T09:58:40Z" },
+  "gates": { "atera": "ok", "probedUtc": "2026-10-05T09:58:40Z" },
   "stages": [ { "name": "Drivers", "status": "Warn", "detail": "3 INF skipped (259)", "startedUtc": "...", "seconds": 212 } ],
   "checks": [ { "id": "bios.current", "status": "Pass", "value": "01.36.00", "expected": ">=01.36.00" } ],
   "manual":  { "diagnostics": "Pass", "biosDefaultsReset": "attested" },
@@ -367,38 +362,6 @@ Rules: status vocabulary `Pass|Warn|Fail|Info|Skipped|Deferred`; verdict = worst
 
 Windows PowerShell 5.1 serialization traps to cover with golden tests: `ConvertTo-Json` renders `DateTime` as `\/Date(...)\/` (so never pass DateTime), default `-Depth 2` truncates nested objects (always pass `-Depth 6`), one-element arrays can collapse (force arrays), `Set-Content -Encoding UTF8` writes a BOM (use `[IO.File]::WriteAllText` with `UTF8Encoding($false)`; the existing build writes `manifest.json` with BOM), and `Test-Json` does not exist in 5.1 (hand-written `Test-KitResult`). (Known 5.1 behaviours, MEDIUM-HIGH.)
 
-### 9.2 Store adapter seam (the store choice is a separate research output; the seam must not leak it)
-
-| Function | Required | Meaning |
-|----------|----------|---------|
-| `Test-KitStore` | yes | real request to the store host (same probe helper as Atera) |
-| `Send-KitStoreResult -Record` | yes | idempotent put keyed by `resultId`; returns `Created`, `Exists`, or `Failed(reason, retryable)` |
-| `Get-KitStoreLatest` | optional (`CanList`) | map `serial -> latest runUtc` (needs a read credential on the laptop; omit when using a write-only credential) |
-| flatten | in adapter | full JSON plus flat columns for the tracker (`serial, runUtc, verdict, mode, model, platformId, bios, ...`); the "latest per serial" view is derived store-side by max(`runUtc`), never by arrival order |
-
-### 9.3 Sync algorithm ("upload anything newer than what the store has")
-
-The stick is the carrier, so no per-laptop "uploaded" flag can be trusted; dedupe is therefore **server-side idempotency first, watermark as optimization, ledger as cache**.
-
-```
-Sync-KitResults:
-  if not Test-KitStore:                       return Deferred            # WARN, never throws, never blocks Verify
-  files  = *.json in Tools:\results (skip .sync); sort ascending by runUtc (parsed as UTC, not by file name/mtime)
-  valid  = files that pass Test-KitResult; invalid -> move to results\_quarantine\, WARN (never delete)
-  if adapter.CanList:  remote = Get-KitStoreLatest
-        candidates = valid where serial not in remote OR runUtc > remote[serial]       # the literal "newer than store" rule
-        (+ optional -IncludeHistory: also records whose resultId the store lacks)
-  else:                candidates = valid where resultId not in ledger[storeId]          # ledger travels with the stick
-  budget: max N records and T seconds per run; per request timeout; retry 5xx/timeouts 3x with exponential backoff + jitter; no retry on 4xx except 408/429
-  for r in candidates (oldest first):
-        outcome = Send-KitStoreResult r
-        if outcome in (Created, Exists): ledger.add(r.resultId)      # atomic write: temp file + rename
-        else: record failure, continue
-  report: "uploaded n, already there m, failed k, deferred d"   -> WARN if k>0; verdict of the current run unchanged
-```
-
-Why this shape: idempotent put makes retries, re-runs on other laptops and a lost ledger safe; oldest-first keeps partial progress monotonic; the store computes latest-per-serial from `runUtc`, so out-of-order arrival is harmless. The one data-loss hazard is a laptop whose clock is in the past having its *newer* result judged "older than the store" under the watermark rule, so the clock-trust logic in 8.2 is load-bearing and the watermark path must never be the only dedupe when `clock.trusted=false` (upload those regardless). Background sync stays optional (a detached `Start-Process` plus log, no service or scheduled task); default is synchronous with a short time budget.
-
 ---
 
 ## 10. Run-time config and secret injection
@@ -406,7 +369,7 @@ Why this shape: idempotent put makes retries, re-runs on other laptops and a los
 Layers, lowest to highest precedence:
 
 1. `config/defaults.psd1` (committed, no secrets: thresholds, endpoint host names that are public, timeouts)
-2. Tools stick `ProvisionKit\config\site.psd1` (gitignored; **the** carrier for Atera installer location/properties, store URL/token, customer-specific values)
+2. Tools stick `ProvisionKit\config\site.psd1` (gitignored; **the** carrier for Atera installer location/properties, customer-specific values)
 3. `C:\ProgramData\ProvisionKit\config.psd1` (optional per-machine override for bench use, gitignored by definition since it is outside the repo)
 4. Parameters / environment (`-AteraMsiPath`, `$env:PK_*`) for one-offs
 
@@ -414,9 +377,9 @@ Mechanics:
 - `Get-KitConfig` merges layers into one object and records *which layer* each key came from (for the result's `tool` block, values excluded).
 - **Registered redaction:** every secret-class key is registered with the logging layer; the transcript/log writer scrubs those values. Pass secrets to installers via `Start-Process -ArgumentList` and avoid verbose echo and MSI verbose logs that print properties (delete or avoid `/l*v` for the Atera step).
 - Builder side: `Build-Kit`/`Publish-Sticks` copy `config/local/site.psd1` (gitignored) onto the Tools stick; nothing from `config/local` is ever written into an ISO, image, or `_images` output.
-- Missing config degrades gracefully: no Atera config means Atera stage = `Skipped` with a yellow line; no store config means Sync = `Deferred`.
+- Missing config degrades gracefully: no Atera config means Atera stage = `Skipped` with a yellow line.
 - Guardrails in repo: `.gitignore` entries for `config/local/`, `*.local.psd1`, `site.psd1`, `secrets/`; committed `site.example.psd1` with fake values; **secret scan** (gitleaks pre-commit + CI) from day one, because history cannot be cleaned later; tests assert `defaults.psd1` contains no keys matching a secret list.
-- Stick loss mitigation (design, not a promise): store credential should be write-only/scoped and rotatable (store research); the Atera installer link should be treated as revocable. Optionally encrypt `site.psd1` with a typed passphrase later; not in milestone 1 (overbuild).
+- Stick loss mitigation (design, not a promise): the Atera installer link should be treated as revocable. Optionally encrypt `site.psd1` with a typed passphrase later; not in milestone 1 (overbuild).
 
 ---
 
@@ -427,14 +390,11 @@ Constraints: `iex` runs text, so there is no `$PSScriptRoot`, no `param()` block
 Design:
 
 ```
-stub (served from a stable URL under the project owner's control, e.g. GitHub Pages or raw on a tag-pinned path; short because it is typed on a phone):
+stub (served from a stable URL under the project owner's control, e.g. GitHub Pages; short because it is typed on a phone):
   1. [Net.ServicePointManager]::SecurityProtocol = Tls12 ; Set-ExecutionPolicy -Scope Process Bypass -Force
   2. not admin -> relaunch elevated (Start-Process powershell -Verb RunAs ...) with the same one-liner
-  3. find Tools stick by marker -> read ProvisionKit\kit\kit.json (stick version)
-  4. online? GET  https://github.com/<o>/<r>/releases/latest/download/kit.json   (stable redirect URL, no API rate limit; avoid api.github.com: 60 req/h per IP, shop NATs share an IP)
-        { version, sha256, url, minStickVersion }   newer than stick copy -> download kit.zip to %ProgramData%\ProvisionKit\dl,
-        verify SHA-256 against kit.json, Expand-Archive to kit\<version>.new, atomic rename; (optional) mirror verified kit onto stick so offline copy catches up
-     offline or any failure -> use stick copy, WARN "running stick version x"
+  3. find Tools stick by marker -> use the on-stick kit as the fallback
+  4. online? fetch the current kit from main; any failure -> use stick copy, WARN "running stick version"
   5. $env:PK_* / splatted params -> & kit\Provision.ps1 @params  (menu if none)
 ```
 
@@ -453,10 +413,9 @@ Principle: **everything with side effects goes through a core seam function so t
 | Seams | `Get-KitUtcNow`, `Invoke-KitNative` (pnputil/dism/net), `Invoke-KitWeb`, `Get-KitStickVolume`, CIM reads | Mock these, not raw cmdlets; wraps the existing `Invoke-Tool` idea |
 | Contract | each `vendors/*/vendor.psd1`: descriptor valid, every mapped command exported, required parameters present, outputs carry required properties | `BeforeDiscovery` over the folder list (Pester 6 throws on an empty `-ForEach`, which is fine because HP always exists); `_template` excluded |
 | Engine | order; **Verify and Persist run last even when a stage throws**; Assess calls zero Mutating stages; Atera installer `Should -Invoke ... -Times 0` when gate fails; resume skips Pass stages | mocks + `Should -Invoke` |
-| Sync | out-of-order, duplicates, partial failure, lost ledger, untrusted clock, corrupt file quarantined, empty stick, 429/5xx retry | fake adapter (`FolderStore`) with scripted outcomes |
 | Golden | result JSON byte layout: UTC `Z` strings, no BOM, arrays, depth, schema validation | committed fixtures |
 | Layout | build a layout from fake files into `TestDrive`, validate; **negative test that reproduces the incident** (file in wrong folder fails validation) | no hardware needed |
-| Bootstrap | hash mismatch aborts; offline falls back to stick; TLS 1.2 set; no secrets in the stub | mock web seam |
+| Bootstrap | offline falls back to stick; TLS 1.2 set; no secrets in the stub | mock web seam |
 | Bench (tag `Bench`, manual, excluded from CI) | Hyper-V Gen 2 VM running the generated ISO (blank password, autologon, first-logon pipeline, online-gate); real 840 G5 and G6 for BIOS USB layout, UEFI diagnostics on the same stick, DISM union behaviour | checklist with results written into `layouts/*.layout.psd1` `Verified` blocks |
 
 Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilter` mocks no longer fall through to the real command (the current `Mock Get-CimInstance ... -ParameterFilter` tests need a default mock), duplicate `BeforeAll`/`BeforeEach` in one block are errors, and `Assert-MockCalled` is removed (use `Should -Invoke`). CI: GitHub Actions `windows-latest` with `shell: powershell` for 5.1 (MEDIUM, from general knowledge; confirm in the CI phase). Do not run ISO-servicing or DISM-heavy tests on the builder by default; the IMAPI2 ISO test already works in `TestDrive`.
@@ -468,8 +427,7 @@ Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilte
 1. **Data-driven stages and layouts.** Orders, gates, USB trees are declared data; code interprets them. Makes the incident class testable.
 2. **Descriptor + command map for vendors** (section 3.2); no classes on 5.1.
 3. **Packs are data, code ships once.** No copying installers into packs.
-4. **Immutable records, external ledgers.** Result files never change; sync state is a separate cache.
-5. **Idempotent-by-key writes** (`resultId`), watermarks only as optimization.
+4. **Immutable records.** Result files never change.
 6. **Tolerant by default, loud in the result.** Harmless exit codes map to Warn; the record keeps the raw codes.
 7. **Capture-and-replay vendor layouts** with SHA-256 manifests and a `Verified` block.
 8. **One engine, many entry points** (stick, `irm|iex`, image first logon).
@@ -483,15 +441,13 @@ Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilte
 | Firmware flash in the specialize pass (current) | Violates mandated order; flashing mid-install; no network, no operator view | Firmware pre-Windows from Tools stick; Windows fallback only in manual Deploy |
 | Copying `Install-*.ps1` into every package and image (current) | Code copies drift (defects 1 and 2) | Single kit, packs are data |
 | "First USB volume" for results (current) | Two sticks; wrong stick gets results | Marker-file discovery |
-| Local-time, overwrite-per-serial `.txt` (current) | No history, merge ambiguity across sites | Immutable UTC JSON, ledger-based sync |
+| Local-time, overwrite-per-serial `.txt` (current) | No history, merge ambiguity across sites | Immutable UTC JSON, per-run files on the Tools stick |
 | Vendor/model rules inside the audit script (current Dell/Lenovo regexes in `Test-DeviceBaseline.ps1`) | Vendor knowledge in neutral code | Profiles + vendor `GetDeviceIdentity`/checks |
 | Hand-typed vendor folder paths | The 2026-10-05 failure mode | Layout manifest, validator, `Verified` gate |
 | Secrets in image, ISO, repo, result, or transcript | Leaks with every laptop | Run-time config from Tools stick, redaction |
-| Auto-update from `main` | A bad commit breaks every shop run | Tagged release + hash, stick fallback |
 | Stage logic that throws to end the run | Skips Verify and the record | Convert to status; engine's `finally` terminal phase |
 | `Read-Host` deep inside functions | Untestable, blocks unattended first logon | Prompts only at the entry layer; everything else takes parameters |
 | PowerShell classes for the vendor interface | Cached definitions break Mock and reload on 5.1 | Descriptor + command map |
-| Background agent or scheduled-task sync | Overbuild; stock laptop is handed over | Synchronous sync with budget (optional detached run) |
 
 ## 15. Scalability considerations
 
@@ -500,8 +456,6 @@ Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilte
 | Vendors | HP module only, contract + template | add folder per vendor | same |
 | Image variants | one union ISO per neighbour group (`ImageGroup` in profile) | per group; ISO build is the slow step (~2x ISO size scratch, DISM) so cache by `image.manifest.json` hash | same |
 | Stick capacity | FAT32 stick holds BIOS + diagnostics + kit + results easily | Install stick packs per model grow; prune by profile | same |
-| Results volume | hundreds of small JSON files; ledger keeps sync O(new) | enforce per-run budget; quarantine folder pruning | store partitioning is store-side |
-| Store | adapter seam | same | adapter swap only |
 
 ---
 
@@ -511,7 +465,7 @@ Pester 6 migration notes that hit the existing suite: unmatched `-ParameterFilte
 core foundations ──┬─> vendor contract + HP Target ──┬─> Result record + checks + Assess ──┬─> Stage engine + Deploy + online gate + Atera ─┐
 (Output, Clock,    │                                 │                                      │                                                ├─> Unattend + first-logon + ISO integration ─> VM bench
  Native, Config,   │                                 └─> HP Build (manifest v2, layouts) ──>│ Publish-Sticks + layout validator              │
- Stick, secret     │                                                                         └─> Store adapter + Sync (store decision gates real adapter; FolderStore first)
+ Stick, secret     │                                                                         
  scan, drift fixes)└─────────────────────────────────────────────────────────────────────────────────────────────> Bootstrap + release packaging (after engine is stable)
                                                                                     Custom/latest pack + G5/G6 union (after layouts and manifest v2; highest uncertainty)
 ```
@@ -521,9 +475,8 @@ core foundations ──┬─> vendor contract + HP Target ──┬─> Result 
 3. **Build plane + output layout + firmware layout + stick publisher.** Manifest v2, vendor/model folders, `Get-FirmwareStickLayout`, `Test-StickLayout`, `Publish-Sticks`. Highest operational value (incident fix) and independent of the engine. Includes bench verification of HP BIOS USB layout and UEFI diagnostics co-residence.
 4. **Result record + check library + Assess mode.** Refactor `Test-DeviceBaseline.ps1` into checks; JSON writer; read-only guarantee tests.
 5. **Stage engine + Deploy + online gate + Atera.** Needs 2 and 4 and config; adds state/resume, firmware gate with BitLocker-suspend fallback.
-6. **Store adapter + sync.** Seam and `FolderStore` right after 4 (unblocks sync tests); real adapter when the store decision lands.
 7. **Unattend generator + first-logon + ISO integration.** Needs 5; includes the blank-password mechanism and VM bench; per-platform union injection.
-8. **Bootstrap + release packaging.** After the engine stabilizes; kit.json/hash tooling.
+8. **Bootstrap + release packaging.** After the engine stabilizes;.
 9. **Custom/latest packs, vendor pack, G5+G6 overlap analysis.** Highest uncertainty; research first.
 
 ## 17. Research flags
@@ -536,8 +489,6 @@ core foundations ──┬─> vendor contract + HP Target ──┬─> Result 
 | FirstLogonCommands elevation and blank-password autologon behaviour on build 26300 | Mechanism evidence is thin | Phase 7, Hyper-V bench |
 | DISM `/Add-Driver /Recurse` behaviour with non-matching or bad INF in a union folder | Tolerance assumption | Phase 7/9 |
 | `GetVendorPack` availability per HP model (`-Category Driverpack`) | Uneven per platform | Phase 9 |
-| Store capability set (write-only, `CanList`, idempotent create) | Drives the sync path used | Store research |
-| `releases/latest/download` redirect behaviour from PS 5.1 and `Expand-Archive` on large zips | General knowledge, not verified here | Phase 8 |
 
 ## Confidence Assessment
 
@@ -545,7 +496,7 @@ core foundations ──┬─> vendor contract + HP Target ──┬─> Result 
 |------|------------|-------|
 | Grounding in existing `src/` | HIGH | Read directly; defects confirmed by grep |
 | Vendor interface / two-plane split | MEDIUM-HIGH | Derived from existing code shape plus HP CMSL docs; Dell/Lenovo only sketched (LOW) |
-| Output layout, stage engine, sync algorithm | MEDIUM | Engineering design; standard idempotent store-and-forward |
+| Output layout, stage engine | MEDIUM | Engineering design |
 | USB layouts | LOW-MEDIUM | HP label and FAT32 facts from HP pages; folder trees unverified; bench required |
 | First-logon / unattend mechanics | MEDIUM | Corroborated by Microsoft Q&A and docs summaries; needs VM bench |
 | `irm | iex` bootstrap | MEDIUM | Sound known constraints; integrity limits stated honestly |

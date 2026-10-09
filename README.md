@@ -83,3 +83,11 @@ Run on the freshly staged machine:
 # Run audit as Administrator
 .\Test-DeviceBaseline.ps1
 ```
+
+Or download and run the latest version straight from `main` (the URL tracks the branch, so it always serves the current file), from an elevated PowerShell. This long URL is interim: the bootstrap URL is typed by hand, so a much shorter one is a research priority (see `BOOT-04` in `.planning/REQUIREMENTS.md`):
+
+```powershell
+irm https://raw.githubusercontent.com/dbensmith/enterprise-workstation-staging/main/src/Test-DeviceBaseline.ps1 | iex
+```
+
+Saving the `.txt`: interactively the script asks where to save (Enter accepts the default: the removable drive it ran from, else the earliest removable letter). Non-interactively it saves to that default without asking. `-OutFile <file or folder>` answers the question up front; with `irm | iex` use `$env:PK_OUTFILE = 'D:\results'` first.
