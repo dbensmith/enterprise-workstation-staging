@@ -1,0 +1,3 @@
+#!/bin/sh
+root=$(git rev-parse --show-toplevel) || exit 1
+exec env -u PSModulePath powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$root/Test-Kit.ps1" -PreCommit
