@@ -32,7 +32,17 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Profiles for the 840 G5 and 840 G6 load with platform ID, expected BIOS defaults, firmware minimum and pack selection data, and build output for each model lands in its own vendor/model folder
   4. A gitleaks scan of the full history is clean, and a commit containing a planted fake token is blocked by the pre-commit hook or CI check
   5. The operator supplies Atera settings by copying the committed `.example` config, and git treats the filled-in copy as ignored
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Test-Kit.ps1 gates (pinned tools, lint, tests, gitleaks), versioned pre-commit hook proven in a throwaway repo, tree lint-clean
+- [ ] 01-02-PLAN.md — Split HPDriverBaseline.psm1 into kit/core (Kit.Core, owns the 13-name manifest) and builder/vendors/hp; output paths and native wrapper
+- [ ] 01-03-PLAN.md — Vendor contract table, Test-KitVendorContract, contract test that fails for a vendor missing any operation
+- [ ] 01-04-PLAN.md — HP target-plane module (D-06 missing functions, driver and firmware install)
+- [ ] 01-05-PLAN.md — 840 G5/G6 profiles with the unverified-value guard; Get-KitConfig and the committed empty config example
+- [ ] 01-06-PLAN.md — HP descriptor and build operations; vendor-neutral builder/Build-DriverBaseline.ps1 writing staging/<vendor>/<model>
+- [ ] 01-07-PLAN.md — kit/Run.cmd and Run.ps1; vendor-neutral installer with -LogPath; audit moved with a URL forwarder
+- [ ] 01-08-PLAN.md — ISO builder moved with a binding-tested answer file and Get-KitPublishFile; Build.cmd; README and docs; hook installed last
 
 ### Phase 2: Tools Stick Firmware Staging
 **Goal**: The operator builds a Tools stick whose BIOS and UEFI diagnostics files sit exactly where HP's pre-Windows tools look for them, so the 2026-10-05 wrong-folder incident cannot happen again
