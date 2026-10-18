@@ -677,19 +677,21 @@ Describe 'Vendor <Name> contract' -ForEach $vendors {
 | A6 | LF-only `.cmd` misparsing in cmd.exe | Pitfall 6 | Low; `.gitattributes` costs nothing |
 | A7 | `Save-Module` with inbox PowerShellGet 1.0.0.1 works after `Install-PackageProvider NuGet -Scope CurrentUser` (the existing build script uses the same provider bootstrap for `Install-Module`) | Standard Stack | `-InstallTools` fails on a fresh builder; fallback is `Install-Module -Scope AllUsers` from an elevated shell, or `Save-PSResource` from pwsh (verified working here) |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Audit script location vs the published `irm` URL**
+All four resolved by the user on 2026-10-18.
+
+1. **Audit script location vs the published `irm` URL** — RESOLVED: move it to `kit/Test-DeviceBaseline.ps1` and update the README URL. NO forwarder at `src/Test-DeviceBaseline.ps1`; the old URL stops working.
    - What we know: README publishes `.../main/src/Test-DeviceBaseline.ps1` for `irm | iex`. The script is already vendor-neutral and self-contained, and `irm | iex` gives no `$PSScriptRoot`, so it cannot import `kit/core`.
    - What's unclear: whether moving it (D-05) may break that URL before Phase 7, and how literally criterion 1 ("audit scripts run through a common module") should apply to it.
    - Recommendation: move it to `kit/Test-DeviceBaseline.ps1`, keep it self-contained (fix lint with a local `Show-*` function), and launch it from `Run.ps1 -Mode Audit` after core resolves the vendor. Update the README URL. Ask the user whether to keep a 3-line forwarder at `src/Test-DeviceBaseline.ps1` until Phase 7.
-2. **Where source ISOs live after `src/` goes away**
+2. **Where source ISOs live after `src/` goes away** — RESOLVED: leave `src/iso/` untouched in Phase 1; Phase 4 settles it.
    - What we know: BUILD-02 (Phase 4) says "Builder lists ISOs in `src/iso/`". An 8 GB ISO sits there now (ignored). D-02 puts ISO *servicing code* in `builder/iso/`.
    - Recommendation: in Phase 1 leave the untracked `src/iso/` alone. Record the question for Phase 4, where the options are to keep `src/iso/` as a drop folder or amend BUILD-02 to e.g. `iso/`. Do not move ISO files in this phase.
-3. **What `Build.cmd` does in Phase 1**
+3. **What `Build.cmd` does in Phase 1** — RESOLVED: thin launcher (same PSModulePath/Bypass pattern as `Run.cmd`) forwarding to `builder/Build-DriverBaseline.ps1`; Phase 2 retargets it.
    - What we know: the master build is BUILD-01 (Phase 2).
    - Recommendation: Phase 1 ships `builder/Build-DriverBaseline.ps1` and `builder/iso/New-BaselineIso.ps1` as the moved scripts. Either omit `Build.cmd` or make it a launcher with the same PSModulePath/Bypass pattern as `Run.cmd` that forwards to `builder/Build-DriverBaseline.ps1`. Planner's call; keep README to 3 commands.
-4. **Unverified-value guard granularity**
+4. **Unverified-value guard granularity** — RESOLVED: block-level `Verified` as recommended.
    - Recommendation: block-level `Verified` (per `FirmwareMinimum`, `BiosDefaults`, plus `PlatformVerified` on G5). Per-setting flags are overbuild until bench data exists.
 
 ## Environment Availability

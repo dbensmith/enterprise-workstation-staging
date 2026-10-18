@@ -41,7 +41,7 @@ Plans:
 - [ ] 01-04-PLAN.md — HP target-plane module (D-06 missing functions, driver and firmware install)
 - [ ] 01-05-PLAN.md — 840 G5/G6 profiles with the unverified-value guard; Get-KitConfig and the committed empty config example
 - [ ] 01-06-PLAN.md — HP descriptor and build operations; vendor-neutral builder/Build-DriverBaseline.ps1 writing staging/<vendor>/<model>
-- [ ] 01-07-PLAN.md — kit/Run.cmd and Run.ps1; vendor-neutral installer with -LogPath; audit moved with a URL forwarder
+- [ ] 01-07-PLAN.md — kit/Run.cmd and Run.ps1; vendor-neutral installer with -LogPath; audit moved to kit/ (no forwarder)
 - [ ] 01-08-PLAN.md — ISO builder moved with a binding-tested answer file and Get-KitPublishFile; Build.cmd; README and docs; hook installed last
 
 ### Phase 2: Tools Stick Firmware Staging
