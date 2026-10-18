@@ -1,10 +1,14 @@
 # Staging & build artifacts
 HP_Staging/
+staging/
 IsoBuild/
 *.iso
 *.wim
 *.esd
 *.swm
+
+# Local tools (pinned Pester, PSScriptAnalyzer, gitleaks)
+.tools/
 
 # Logs and transcripts
 *.log
