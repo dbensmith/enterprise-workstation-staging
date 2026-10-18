@@ -11,6 +11,7 @@ BeforeDiscovery {
 BeforeAll {
     function Invoke-RepoNative {
         # Native stderr must not become a terminating error; return the exit code and merged output.
+        # ANSI colour sequences are stripped: an ESC byte in a -Because message breaks the JUnit XML report.
         param(
             [Parameter(Mandatory)]
             [string]$FilePath,
@@ -18,7 +19,7 @@ BeforeAll {
             [string[]]$ArgumentList = @()
         )
         $ErrorActionPreference = 'Continue'
-        $output = & $FilePath @ArgumentList 2>&1 | ForEach-Object { "$_" }
+        $output = & $FilePath @ArgumentList 2>&1 | ForEach-Object { "$_" -replace '\x1B\[[0-9;?]*[A-Za-z]', '' }
         [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Output   = @($output)
@@ -26,6 +27,22 @@ BeforeAll {
     }
 
     $script:repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '..')).ProviderPath
+
+    # Same resolution as Test-Kit.ps1: KIT_TOOLS, this checkout's .tools, then the main checkout's .tools.
+    $script:toolRoot = if ($env:KIT_TOOLS) {
+        $env:KIT_TOOLS
+    }
+    elseif (Test-Path -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.tools\Modules')) {
+        Join-Path -Path $script:repoRoot -ChildPath '.tools'
+    }
+    else {
+        $common = Invoke-RepoNative -FilePath 'git' -ArgumentList @('-C', $script:repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+        Join-Path -Path (Split-Path -Path ([string]$common.Output[-1]).Trim() -Parent) -ChildPath '.tools'
+    }
+    $script:gitleaks = Join-Path -Path $script:toolRoot -ChildPath 'gitleaks\gitleaks.exe'
+    if (-not (Test-Path -LiteralPath $script:gitleaks)) {
+        $script:gitleaks = (Get-Command -Name 'gitleaks' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    }
 }
 
 Describe 'Pre-commit secret gate' -Tag Hook {
@@ -86,18 +103,6 @@ Describe 'Pre-commit secret gate' -Tag Hook {
                 CommitOutput   = $commit.Output -join [Environment]::NewLine
                 HeadExitCode   = $head.ExitCode
             }
-        }
-
-        # Same resolution as Test-Kit.ps1: KIT_TOOLS, this checkout's .tools, then the main checkout's .tools.
-        $script:toolRoot = if ($env:KIT_TOOLS) {
-            $env:KIT_TOOLS
-        }
-        elseif (Test-Path -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.tools\Modules')) {
-            Join-Path -Path $script:repoRoot -ChildPath '.tools'
-        }
-        else {
-            $common = Invoke-RepoNative -FilePath 'git' -ArgumentList @('-C', $script:repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir')
-            Join-Path -Path (Split-Path -Path ([string]$common.Output[-1]).Trim() -Parent) -ChildPath '.tools'
         }
 
         # The inner gate (run by the hook) finds the tools here and skips Pester, even when this file runs directly.
@@ -210,5 +215,86 @@ Describe 'Lint and repo hygiene' {
     ) {
         $check = Invoke-RepoNative -FilePath 'git' -ArgumentList @('-C', $script:repoRoot, 'check-ignore', '-q', '--no-index', $IgnoredPath)
         $check.ExitCode | Should -Be 0
+    }
+}
+
+Describe 'Secret rules' -Tag Secrets {
+    BeforeAll {
+        function Invoke-RepoSecretScan {
+            # gitleaks dir on one folder with the repo's config (gitleaks would otherwise read config from the target).
+            param(
+                [Parameter(Mandatory)]
+                [string]$Folder,
+
+                [Parameter(Mandatory)]
+                [string]$ReportName
+            )
+            $report = Join-Path -Path $TestDrive -ChildPath $ReportName
+            $scan = Invoke-RepoNative -FilePath $script:gitleaks -ArgumentList @(
+                'dir', $Folder, '-c', (Join-Path -Path $script:repoRoot -ChildPath '.gitleaks.toml'),
+                '--no-banner', '--redact', '--ignore-gitleaks-allow', '--report-format', 'json', '--report-path', $report)
+            $findings = if (Test-Path -LiteralPath $report) { @(Get-Content -LiteralPath $report -Raw | ConvertFrom-Json) } else { @() }
+            [pscustomobject]@{
+                ExitCode = $scan.ExitCode
+                Output   = $scan.Output -join [Environment]::NewLine
+                Findings = $findings
+            }
+        }
+
+        function New-ScanFolder {
+            # One TestDrive folder holding one file with the given lines.
+            [CmdletBinding(SupportsShouldProcess)]
+            [OutputType([string])]
+            param(
+                [Parameter(Mandatory)]
+                [string]$Name,
+
+                [Parameter(Mandatory)]
+                [string]$FileName,
+
+                [Parameter(Mandatory)]
+                [string[]]$Line
+            )
+            $folder = Join-Path -Path $TestDrive -ChildPath $Name
+            if (-not $PSCmdlet.ShouldProcess($folder, 'Create a scan folder')) { return }
+            $null = New-Item -Path $folder -ItemType Directory -Force
+            Set-Content -LiteralPath (Join-Path -Path $folder -ChildPath $FileName) -Value $Line -Encoding Ascii
+            $folder
+        }
+    }
+
+    It 'flags an Atera agent link carrying filled account values' {
+        # Every value is joined from fragments at run time, so no literal in this file matches the rule.
+        $login = ('ops' + '.' + 'desk') + '%40' + ('contoso' + '.example')
+        $account = ('0013z' + '00002') + ('QxRtYuIoPa' + 'AAG')
+        $link = 'https://' + 'helpdesk.servicedesk.atera.com/GetAgent/Msi/?customerId=7&integrator' + 'Login=' + $login + '&account' + 'Id=' + $account
+        $folder = New-ScanFolder -Name 'atera-filled' -FileName 'install.txt' -Line $link
+        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'atera-filled.json'
+        $scan.ExitCode | Should -Be 1 -Because $scan.Output
+        @($scan.Findings | ForEach-Object { $_.RuleID }) | Should -Contain 'atera-agent-link'
+    }
+
+    It 'reports nothing for the empty-value example shape' {
+        $example = @(
+            '@{'
+            '    Atera = @{'
+            "        InstallerUrl    = ''"
+            "        IntegratorLogin = ''"
+            "        CustomerId      = ''"
+            "        AccountId       = ''"
+            '    }'
+            '}'
+        )
+        $folder = New-ScanFolder -Name 'atera-empty' -FileName 'config.example.psd1' -Line $example
+        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'atera-empty.json'
+        $scan.ExitCode | Should -Be 0 -Because $scan.Output
+        @($scan.Findings) | Should -BeNullOrEmpty
+    }
+
+    It 'finds no secret anywhere in the full history (Test-Kit.ps1 -ScanHistory)' {
+        $powershell = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $run = Invoke-RepoNative -FilePath $powershell -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path -Path $script:repoRoot -ChildPath 'Test-Kit.ps1'), '-ScanHistory')
+        $run.ExitCode | Should -Be 0 -Because ($run.Output -join [Environment]::NewLine)
     }
 }
