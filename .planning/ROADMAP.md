@@ -34,11 +34,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A gitleaks scan of the full history is clean, and a commit containing a planted fake token is blocked by the pre-commit hook or CI check
   5. The operator supplies Atera settings by copying the committed `.example` config, and git treats the filled-in copy as ignored
 
-**Plans**: 8 plans
+**Plans**: 1/8 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md — Test-Kit.ps1 gates (pinned tools, lint, tests, gitleaks), versioned pre-commit hook proven in a throwaway repo, tree lint-clean
+- [x] 01-01-PLAN.md — Test-Kit.ps1 gates (pinned tools, lint, tests, gitleaks), versioned pre-commit hook proven in a throwaway repo, tree lint-clean
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02-PLAN.md — Split HPDriverBaseline.psm1 into kit/core (Kit.Core, owns the 13-name manifest) and builder/vendors/hp; output paths and native wrapper
@@ -143,7 +143,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Modular Foundation | 0/TBD | Not started | - |
+| 1. Modular Foundation | 1/8 | In Progress | - |
 | 2. Tools Stick Firmware Staging | 0/TBD | Not started | - |
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
