@@ -357,8 +357,9 @@ function Invoke-GateLint {
     }
 
     # Tracked plus untracked-but-not-ignored: .tools\, HP_Staging\ and staging\ are never linted,
-    # and a new file is linted before it is staged.
-    $list = Invoke-GateNative -FilePath 'git' -ArgumentList @('-C', $root, 'ls-files', '--cached', '--others', '--exclude-standard', '--', '*.ps1', '*.psm1', '*.psd1')
+    # and a new file is linted before it is staged. icase so that X.PS1 cannot slip past.
+    $list = Invoke-GateNative -FilePath 'git' -ArgumentList @('-C', $root, 'ls-files', '--cached', '--others', '--exclude-standard', '--',
+        ':(icase)*.ps1', ':(icase)*.psm1', ':(icase)*.psd1')
     if ($list.ExitCode -ne 0) {
         Show-GateResult -Status FAIL -Gate 'Lint' -Detail "git ls-files failed: $($list.Output -join ' ')"
         return

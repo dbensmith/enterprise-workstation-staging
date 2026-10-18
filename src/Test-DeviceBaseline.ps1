@@ -256,23 +256,41 @@ $lines = @(
     "=============================================="
 )
 
+# Screen output lives in Show-* functions (defined before first use: this also runs top to bottom under irm | iex)
+function Show-AuditLine {
+    # One report line, with its [PASS]/[WARN]/[FAIL] tag coloured for photo/camera clarity
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Line)
+    if ($Line -match '\[PASS\]') {
+        Write-Host $Line.Substring(0, $Line.IndexOf('[PASS]')) -NoNewline
+        Write-Host '[PASS]' -ForegroundColor Green -NoNewline
+        Write-Host $Line.Substring($Line.IndexOf('[PASS]') + 6)
+    } elseif ($Line -match '\[WARN\]') {
+        Write-Host $Line.Substring(0, $Line.IndexOf('[WARN]')) -NoNewline
+        Write-Host '[WARN]' -ForegroundColor Yellow -NoNewline
+        Write-Host $Line.Substring($Line.IndexOf('[WARN]') + 6)
+    } elseif ($Line -match '\[FAIL\]') {
+        Write-Host $Line.Substring(0, $Line.IndexOf('[FAIL]')) -NoNewline
+        Write-Host '[FAIL]' -ForegroundColor Red -NoNewline
+        Write-Host $Line.Substring($Line.IndexOf('[FAIL]') + 6)
+    } else {
+        Write-Host $Line
+    }
+}
+
+function Show-SaveResult {
+    # Where the results file went (or why it did not)
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [Parameter(Mandatory)][ConsoleColor]$Color
+    )
+    Write-Host $Message -ForegroundColor $Color
+}
+
 # Output with visual highlights for photo/camera clarity
 foreach ($line in $lines) {
-    if ($line -match '\[PASS\]') {
-        Write-Host $line.Substring(0, $line.IndexOf('[PASS]')) -NoNewline
-        Write-Host '[PASS]' -ForegroundColor Green -NoNewline
-        Write-Host $line.Substring($line.IndexOf('[PASS]') + 6)
-    } elseif ($line -match '\[WARN\]') {
-        Write-Host $line.Substring(0, $line.IndexOf('[WARN]')) -NoNewline
-        Write-Host '[WARN]' -ForegroundColor Yellow -NoNewline
-        Write-Host $line.Substring($line.IndexOf('[WARN]') + 6)
-    } elseif ($line -match '\[FAIL\]') {
-        Write-Host $line.Substring(0, $line.IndexOf('[FAIL]')) -NoNewline
-        Write-Host '[FAIL]' -ForegroundColor Red -NoNewline
-        Write-Host $line.Substring($line.IndexOf('[FAIL]') + 6)
-    } else {
-        Write-Host $line
-    }
+    Show-AuditLine -Line $line
 }
 
 # Where to save the .txt: the stick this script ran from if it is removable, otherwise the removable drive
@@ -310,10 +328,10 @@ if ($target) {
         $dir = Split-Path -Path $target -Parent
         if ($dir) { New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null }
         $lines | Set-Content -Path $target -Encoding UTF8 -Force -ErrorAction Stop
-        Write-Host "Saved: $target" -ForegroundColor Green
+        Show-SaveResult -Message "Saved: $target" -Color Green
     } catch {
-        Write-Host "Could not save to $target - photo the screen." -ForegroundColor Yellow
+        Show-SaveResult -Message "Could not save to $target - photo the screen." -Color Yellow
     }
 } else {
-    Write-Host "Not saved (no removable USB drive or save skipped) - photo the screen." -ForegroundColor Yellow
+    Show-SaveResult -Message "Not saved (no removable USB drive or save skipped) - photo the screen." -Color Yellow
 }

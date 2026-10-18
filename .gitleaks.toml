@@ -1,6 +1,6 @@
 title = "enterprise-workstation-staging"
 
-# Start from gitleaks' maintained default rule set. No allowlists of any kind: every gitleaks
-# call in Test-Kit.ps1 also passes --ignore-gitleaks-allow, so inline allow markers do not work.
+# Start from gitleaks' maintained default rule set. No allow mechanism of any kind is used: every
+# gitleaks call in Test-Kit.ps1 also passes --ignore-gitleaks-allow, so inline markers do not work.
 [extend]
 useDefault = true

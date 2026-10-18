@@ -1,6 +1,6 @@
 # PSScriptAnalyzer settings for Test-Kit.ps1.
 # This file may only ENABLE extra rules. The project forbids lint suppression of any kind:
-# no ExcludeRules, IncludeRules or Severity filter here, no SuppressMessage attributes in code.
+# no rule exclusion, rule inclusion or severity filter here, no suppression attributes in code.
 # Findings are fixed in the code. tests\Repo.Tests.ps1 enforces this shape.
 @{
     Rules = @{
