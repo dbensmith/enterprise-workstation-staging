@@ -454,7 +454,10 @@ function Invoke-GateTest {
         Remove-Item -Path Env:\KIT_GATE_ACTIVE -ErrorAction SilentlyContinue
     }
 
-    if ($result.Result -ne 'Passed') {
+    if ($null -eq $result) {
+        Show-GateResult -Status FAIL -Gate 'Tests' -Detail 'Pester returned no result (see the errors above)'
+    }
+    elseif ($result.Result -ne 'Passed') {
         Show-GateResult -Status FAIL -Gate 'Tests' -Detail "$($result.FailedCount) failed, $($result.PassedCount) passed"
     }
     elseif ($result.PassedCount -eq 0) {

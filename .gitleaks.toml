@@ -4,3 +4,12 @@ title = "enterprise-workstation-staging"
 # gitleaks call in Test-Kit.ps1 also passes --ignore-gitleaks-allow, so inline markers do not work.
 [extend]
 useDefault = true
+
+# Atera agent installer link or MSI properties carrying a real value. The committed example config
+# keeps these values empty (''), which this rule does not match, so no exception is needed.
+[[rules]]
+id = "atera-agent-link"
+description = "Atera agent installer link or MSI properties carrying a real account value"
+regex = '''(?i)(?:accountId|IntegratorLogin|customerId)\s*[=:]\s*['"]?([A-Za-z0-9%@._-]{6,})'''
+secretGroup = 1
+keywords = ["accountid", "integratorlogin", "customerid"]
