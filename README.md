@@ -9,7 +9,7 @@ This repository provides an automated workflow to stage, deploy, and verify know
 1. **Driver & Firmware Baselining (`src/Build-HPDriverBaseline.ps1`)**: Queries HP's SoftPaq catalog via HPCMSL (HP Client Management Script Library) for target hardware platforms, extracts DCH drivers into INF trees, and stages firmware updates with metadata (`manifest.json`).
 2. **Automated ISO Image Engineering (`src/New-HPBaselineIso.ps1`)**: Services a clean Windows installation ISO (WIM/ESD), injects the driver tree offline via DISM, embeds an unattended first-boot baseline installer, and builds a bootable dual BIOS/UEFI UDF ISO using native Windows IMAPI2 (no Windows ADK or `oscdimg` required).
 3. **Target Baseline Installer (`src/Install-HPDriverBaseline.ps1`)**: Standalone applier executed either online on target hardware (injects drivers via `pnputil`, checks hardware ID matches, safely suspends BitLocker, flashes BIOS) or offline via DISM.
-4. **Post-Imaging Device Audit (`src/Test-DeviceBaseline.ps1`)**: Comprehensive quality-assurance audit tool that verifies hardware specs (serial number, CPU, RAM channel configuration, boot disk, BIOS version), OS edition, Windows digital activation status, and RMM connectivity (Atera agent and Splashtop check-in).
+4. **Post-Imaging Device Audit (`src/Test-DeviceBaseline.ps1`)**: Comprehensive quality-assurance audit tool that verifies hardware specs (serial number, CPU, RAM channel configuration, boot disk, BIOS version), OS edition, Windows digital activation status, and optional third-party service checks (`-ThirdPartyService`, for example an RMM agent, plus a Splashtop info line).
 
 ---
 

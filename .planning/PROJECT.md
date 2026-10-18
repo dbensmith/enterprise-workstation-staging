@@ -17,12 +17,12 @@ An HP EliteBook 840 G5 or G6 goes from firmware update to verified, imaged lapto
 - ✓ HP driver and firmware baseline build via HPCMSL (`src/Build-HPDriverBaseline.ps1`) — existing
 - ✓ Windows ISO servicing: offline driver injection, unattended first-boot installer, bootable dual BIOS/UEFI ISO via IMAPI2 (`src/New-HPBaselineIso.ps1`) — existing
 - ✓ Standalone baseline installer, online (pnputil, BitLocker suspend, BIOS flash) or offline (DISM) (`src/Install-HPDriverBaseline.ps1`) — existing
-- ✓ Post-imaging device audit: serial, CPU, RAM, boot disk, BIOS, OS edition, activation, Atera/Splashtop (`src/Test-DeviceBaseline.ps1`) — existing
+- ✓ Post-imaging device audit: serial, CPU, RAM, boot disk, BIOS, OS edition, activation, third-party services (`src/Test-DeviceBaseline.ps1`) — existing
 - ✓ Profile for HP Platform 8549 (EliteBook 840 G6) and Pester tests — existing
 
 ### Active
 
-Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firmware update; (3) reset BIOS to defaults straight after; (4) boot USB UEFI diagnostics (latest version from the stick, not the older built-in) and run them; (5) image, with Wi-Fi password typed at Windows' setup network screen and never stored in the image; (6) first logon: offline steps (drivers, local account setup) → wait until confirmed online → Atera → verify last.
+Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firmware update; (3) reset BIOS to defaults straight after; (4) boot USB UEFI diagnostics (latest version from the stick, not the older built-in) and run them; (5) image, with Wi-Fi password typed at Windows' setup network screen and never stored in the image; (6) first logon: offline steps (drivers, local account setup) → wait until confirmed online → third-party installers (PSADT packages) → verify last.
 
 **Modular repo**
 - [ ] Shared code in a common area; vendor code in per-vendor modules behind one interface (list models, fetch vendor pack, build custom pack, fetch firmware, install drivers, install firmware)
@@ -46,16 +46,16 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 - [ ] Verify always runs last
 - [ ] MUST run from USB; SHOULD run from a short `irm <url> | iex` served from GitHub (replacing pastebin), with automatic updates from the repo; which pieces the web route can pull is for research. The typed URL MUST be as short as possible (typed by hand); finding the shortest workable form is a research priority
 
-**Atera**
-- [ ] MUST NOT start the installer until the laptop is confirmed online (the MSI asks for an install token when offline, which the operator doesn't have)
-- [ ] Online check SHOULD be a real request to Atera's endpoints, not just "network connected"
+**Third-party installers (PSADT)**
+- [ ] Third-party installers run through PSAppDeployToolkit (PSADT) packages in `kit/apps/<Name>/`, silent, one per folder; vendor binaries and customer settings stay gitignored. A package flagged as needing internet MUST NOT start until the laptop is confirmed online (some MSIs ask for an install token when offline, which the operator does not have)
+- [ ] Online check SHOULD be a real HTTPS request to the endpoint the package declares, not just "network connected"
 
 **Results**
 - [ ] Verify timestamps every result in ISO 8601 UTC (e.g. `2026-10-05T10:02:00Z`)
 - [ ] Results saved per serial to the Tools stick's `results` folder
 
 **Secrets**
-- [ ] No credentials or customer-specific settings in the repo, including history (Atera MSI and download link, etc.); supplied at run time via gitignored local config, the Tools stick, or parameters
+- [ ] No credentials or customer-specific settings in the repo, including history (installer download links, MSI properties, tokens); supplied at run time via gitignored local config, the Tools stick, or parameters
 - [ ] Repo SHOULD include a secret-scan check (pre-commit or CI)
 
 ### Out of Scope
@@ -80,7 +80,7 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 - **Secrets**: nothing credential-like or customer-specific in the repo or its history — repo may be public or shared; secrets come in at run time
 - **Network**: unreliable internet — every online step needs graceful offline behavior
 - **Output**: green/yellow/red, easy to read; harmless exit codes are warnings, not failures — operator reads results on a phone
-- **Ordering**: assess → firmware → BIOS defaults → UEFI diagnostics → image → first logon (drivers → online → Atera → verify) is mandatory
+- **Ordering**: assess → firmware → BIOS defaults → UEFI diagnostics → image → first logon (drivers → online → third-party installers → verify) is mandatory
 - **Timestamps**: ISO 8601 UTC for all results — avoids timezone conflicts across sites
 - **Hardware**: exactly two USB sticks (Tools and Install)
 
@@ -93,7 +93,7 @@ Required order per laptop: (1) Assess, read-only, before purchase; (2) BIOS/firm
 | Support both vendor-published and custom latest-driver packs | Published packs are often years out of date | — Pending |
 | Stage BIOS in exact vendor flash-tool layout, plus Windows flash tool fallback | Five units failed on 2026-10-05 from wrong folder layout | — Pending |
 | Blank password for local account `User` | Avoids forced password creation at second logon; operator accepted the trade-off | — Pending |
-| Block Atera install until real online check passes | MSI prompts for a token when offline | — Pending |
+| Block internet-dependent third-party installs until real online check passes | MSI prompts for a token when offline | — Pending |
 | No central online results store | Out of scope (2026-10-09); results stay as per-serial files on the Tools stick | Decided |
 | Secrets supplied at run time, never committed | No credentials in repo or history | — Pending |
 

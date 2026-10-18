@@ -42,3 +42,9 @@ HPQPswd*.bin
 
 # Results from provisioned laptops (serials, customer data)
 results/
+
+# Third-party installer packages (PSAppDeployToolkit): vendor binaries and customer settings stay local
+kit/apps/*
+!kit/apps/README.md
+!kit/apps/_Example/
+!kit/apps/_Example/**

@@ -16,7 +16,7 @@
 
 ### Secrets
 
-- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (Atera MSI/link)
+- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (third-party installer links, MSI properties, tokens)
 - [ ] **SEC-02**: Operator supplies secrets at run time via a gitignored local config, the Tools stick, or parameters; a committed `.example` config documents the schema
 - [ ] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
 
@@ -73,15 +73,15 @@
 - [ ] **LOGON-01**: Offline steps (drivers, `User` account setup) run without internet
 - [ ] **LOGON-02**: Driver install tolerates drivers that don't match the hardware and picks the pack by platform ID
 - [ ] **LOGON-03**: First-logon run survives a reboot mid-sequence and continues
-- [ ] **LOGON-04**: Online gate confirms internet with a real HTTPS request to Atera's endpoints (TLS 1.2), with bounded retry, then defers with a warning
-- [ ] **LOGON-05**: Atera installer never starts until the online gate passes, has a hard timeout, and is confirmed by the `AteraAgent` service running
+- [ ] **LOGON-04**: Online gate confirms internet with a real HTTPS request (TLS 1.2) to the endpoint each online package declares, with bounded retry, then defers with a warning
+- [ ] **LOGON-05**: Third-party installers run as PSAppDeployToolkit (PSADT) packages from `kit/apps/`, silent and one per folder. A package that needs internet never starts until the online gate passes, has a hard timeout, and is confirmed by its own declared detection (for example a service running)
 - [ ] **LOGON-06**: First-logon run cleans up autologon after it finishes
 - [ ] **LOGON-07**: Operator records the UEFI diagnostics pass/fail at a quick prompt so it lands in the result
 
 ### Verify
 
-- [ ] **VERIFY-01**: Verify always runs last, after Atera
-- [ ] **VERIFY-02**: Verify checks firmware is current, BIOS settings match profile defaults, driver errors, activation, account state, Atera and Splashtop
+- [ ] **VERIFY-01**: Verify always runs last, after third-party installs
+- [ ] **VERIFY-02**: Verify checks firmware is current, BIOS settings match profile defaults, driver errors, activation, account state, and the third-party packages' declared detections (Splashtop info only)
 - [ ] **VERIFY-03**: Verify records the disk sanitization method used (re-image)
 
 ### Results

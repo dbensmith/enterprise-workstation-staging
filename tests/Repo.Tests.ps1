@@ -263,30 +263,30 @@ Describe 'Secret rules' -Tag Secrets {
         }
     }
 
-    It 'flags an Atera agent link carrying filled account values' {
+    It 'flags a third-party installer link carrying filled account values' {
         # Every value is joined from fragments at run time, so no literal in this file matches the rule.
         $login = ('ops' + '.' + 'desk') + '%40' + ('contoso' + '.example')
         $account = ('0013z' + '00002') + ('QxRtYuIoPa' + 'AAG')
-        $link = 'https://' + 'helpdesk.servicedesk.atera.com/GetAgent/Msi/?customerId=7&integrator' + 'Login=' + $login + '&account' + 'Id=' + $account
-        $folder = New-ScanFolder -Name 'atera-filled' -FileName 'install.txt' -Line $link
-        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'atera-filled.json'
+        $link = 'https://' + 'rmm.contoso.example/GetAgent/Msi/?customerId=7&integrator' + 'Login=' + $login + '&account' + 'Id=' + $account
+        $folder = New-ScanFolder -Name 'installer-filled' -FileName 'install.txt' -Line $link
+        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'installer-filled.json'
         $scan.ExitCode | Should -Be 1 -Because $scan.Output
-        @($scan.Findings | ForEach-Object { $_.RuleID }) | Should -Contain 'atera-agent-link'
+        @($scan.Findings | ForEach-Object { $_.RuleID }) | Should -Contain 'installer-account-value'
     }
 
     It 'reports nothing for the empty-value example shape' {
         $example = @(
             '@{'
-            '    Atera = @{'
+            '    ThirdParty = @{'
             "        InstallerUrl    = ''"
             "        IntegratorLogin = ''"
             "        CustomerId      = ''"
-            "        AccountId       = ''"
+            "        InstallToken    = ''"
             '    }'
             '}'
         )
-        $folder = New-ScanFolder -Name 'atera-empty' -FileName 'config.example.psd1' -Line $example
-        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'atera-empty.json'
+        $folder = New-ScanFolder -Name 'installer-empty' -FileName 'config.example.psd1' -Line $example
+        $scan = Invoke-RepoSecretScan -Folder $folder -ReportName 'installer-empty.json'
         $scan.ExitCode | Should -Be 0 -Because $scan.Output
         @($scan.Findings) | Should -BeNullOrEmpty
     }
