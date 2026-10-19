@@ -28,6 +28,7 @@
         'Test-FirmwareStage'
         'Show-FirmwareStageFinding'
         'Publish-FirmwareStage'
+        'New-KitFirmwareSnapshot'
     )
     CmdletsToExport       = @()
     VariablesToExport     = @()

@@ -158,7 +158,8 @@ function Get-KitStagePlan {
     Private helper of Publish-FirmwareStage. Each entry must name a group of the layout, a path that is valid on FAT32 and
     lies under its group folder (with {Platform} replaced by the model's platform id), and an existing source whose size
     and SHA-256 equal the entry's and whose vendor hash, when present, matches. Any problem throws one message that
-    names the entry, so nothing has been written when it is raised. A staged captured group needs an entry in the
+    names the entry, so nothing has been written when it is raised. A staged captured group is replayed from its
+    recorded snapshot (Resolve-KitCaptureEntry) and its files go through the same checks; it needs an entry in the
     capture path table.
 
     .PARAMETER Layout
@@ -197,63 +198,76 @@ function Get-KitStagePlan {
     $layoutGroup = @{}
     foreach ($group in $Layout.Groups) { $layoutGroup[$group.Id.ToLowerInvariant()] = $group }
 
-    foreach ($group in $StagedGroup) {
-        if ($group.SourceKind -ceq 'Captured' -and -not $CapturePath.ContainsKey($group.CaptureName)) {
-            throw ("FW-05: the UEFI diagnostics capture is missing. Group '{0}' needs the captured tree; pass it as the capture path for '{1}' (builder: -DiagnosticsSource). Steps: docs\firmware-bench-checklist.md." -f $group.Id, $group.CaptureName)
-        }
-    }
-
-    $pair = [System.Collections.Generic.List[object]]::new()
+    # Every file to stage, from the models and from the captures, waits here to be checked in one place.
+    $work = [System.Collections.Generic.List[object]]::new()
     foreach ($item in $Model) {
         foreach ($entry in @($item.Entries)) {
-            $path = [string]$entry.RelativePath
-            $label = "entry '$path' of model '$($item.ModelId)'"
+            $label = "entry '$($entry.RelativePath)' of model '$($item.ModelId)'"
             $group = $layoutGroup[([string]$entry.Group).ToLowerInvariant()]
             if (-not $group) { throw "$label names the group '$($entry.Group)', which the layout does not have" }
             if ($group.SourceKind -ceq 'Captured') { throw "$label names the captured group '$($group.Id)'; a captured group is filled from the capture only" }
             if (-not $stagedId.Contains($group.Id)) { continue }
-
-            $problem = @(Get-KitStagePathProblem -RelativePath $path -Size ([long]$entry.Size))
-            if ($problem.Count -gt 0) { throw "$label is not a valid stick path: $($problem -join '; ')" }
-            $leaf = $path.Substring($path.LastIndexOf('\') + 1)
-            if ($leaf -like '*Pswd*.bin' -or $leaf -eq 'password.bin') { throw "$label is a password file name; such a file must never be staged" }
-
-            $folder = $group.Folder
-            if ($folder.Contains('{Platform}')) {
-                if (-not [string]$item.PlatformId) { throw "$label needs a platform id: group '$($group.Id)' folder is $folder" }
-                $folder = $folder.Replace('{Platform}', [string]$item.PlatformId)
-            }
-            if (-not $path.StartsWith($folder + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                throw "$label lies outside its group folder $folder (group '$($group.Id)')"
-            }
-
-            $source = [string]$entry.SourcePath
-            if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$label has no source file: $source" }
-            $length = (Get-Item -LiteralPath $source -Force).Length
-            if ($length -ne [long]$entry.Size) { throw "$label source size $length differs from the vendor result size $($entry.Size)" }
-            $sha256 = Get-KitCachedHash -Path $source -Algorithm SHA256 -Cache $cache
-            if ($sha256 -ne ([string]$entry.Sha256).ToLowerInvariant()) { throw "$label source SHA-256 differs from the vendor result" }
-            $vendorHash = $null
-            if ($entry.VendorHash) {
-                $algorithm = [string]$entry.VendorHash.Algorithm
-                if ($algorithm -notin 'SHA256', 'SHA384', 'SHA512') { throw "$label has vendor hash algorithm '$algorithm', which is not supported" }
-                if ((Get-KitCachedHash -Path $source -Algorithm $algorithm -Cache $cache) -ne ([string]$entry.VendorHash.Value).ToLowerInvariant()) {
-                    throw "$label source $algorithm hash differs from the vendor hash"
-                }
-                $vendorHash = [pscustomobject]@{ Algorithm = $algorithm; Value = [string]$entry.VendorHash.Value; Source = [string]$entry.VendorHash.Source }
-            }
-            $pair.Add([pscustomobject]@{
-                    Owner = [string]$item.ModelId
-                    Entry = [pscustomobject]@{
-                        RelativePath = $path
-                        SourcePath   = $source
-                        Group        = $group.Id
-                        Size         = [long]$length
-                        Sha256       = $sha256
-                        VendorHash   = $vendorHash
-                    }
-                })
+            $work.Add([pscustomobject]@{ Owner = [string]$item.ModelId; PlatformId = [string]$item.PlatformId; Label = $label; Group = $group; Entry = $entry })
         }
+    }
+
+    $capture = [System.Collections.Generic.List[object]]::new()
+    foreach ($group in $StagedGroup) {
+        if ($group.SourceKind -cne 'Captured') { continue }
+        $definition = $Layout.Captures | Where-Object { $_.Name -eq $group.CaptureName } | Select-Object -First 1
+        $found = @(Resolve-KitCaptureEntry -Layout $Layout -Group $group -CapturePath $CapturePath -Cache $cache)
+        foreach ($entry in $found) {
+            $work.Add([pscustomobject]@{ Owner = ''; PlatformId = ''; Label = "captured file '$($entry.RelativePath)'"; Group = $group; Entry = $entry })
+        }
+        $capture.Add([pscustomobject]@{ Name = $definition.Name; PackageId = $definition.PackageId; Version = $definition.Version; FileCount = $found.Count })
+    }
+
+    $pair = [System.Collections.Generic.List[object]]::new()
+    foreach ($each in $work) {
+        $entry = $each.Entry
+        $group = $each.Group
+        $label = $each.Label
+        $path = [string]$entry.RelativePath
+        $problem = @(Get-KitStagePathProblem -RelativePath $path -Size ([long]$entry.Size))
+        if ($problem.Count -gt 0) { throw "$label is not a valid stick path: $($problem -join '; ')" }
+        $leaf = $path.Substring($path.LastIndexOf('\') + 1)
+        if ($leaf -like '*Pswd*.bin' -or $leaf -eq 'password.bin') { throw "$label is a password file name; such a file must never be staged" }
+
+        $folder = $group.Folder
+        if ($folder.Contains('{Platform}')) {
+            if (-not $each.PlatformId) { throw "$label needs a platform id: group '$($group.Id)' folder is $folder" }
+            $folder = $folder.Replace('{Platform}', $each.PlatformId)
+        }
+        if (-not $path.StartsWith($folder + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "$label lies outside its group folder $folder (group '$($group.Id)')"
+        }
+
+        $source = [string]$entry.SourcePath
+        if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$label has no source file: $source" }
+        $length = (Get-Item -LiteralPath $source -Force).Length
+        if ($length -ne [long]$entry.Size) { throw "$label source size $length differs from the recorded size $($entry.Size)" }
+        $sha256 = Get-KitCachedHash -Path $source -Algorithm SHA256 -Cache $cache
+        if ($sha256 -ne ([string]$entry.Sha256).ToLowerInvariant()) { throw "$label source SHA-256 differs from the recorded hash" }
+        $vendorHash = $null
+        if ($entry.VendorHash) {
+            $algorithm = [string]$entry.VendorHash.Algorithm
+            if ($algorithm -notin 'SHA256', 'SHA384', 'SHA512') { throw "$label has vendor hash algorithm '$algorithm', which is not supported" }
+            if ((Get-KitCachedHash -Path $source -Algorithm $algorithm -Cache $cache) -ne ([string]$entry.VendorHash.Value).ToLowerInvariant()) {
+                throw "$label source $algorithm hash differs from the vendor hash"
+            }
+            $vendorHash = [pscustomobject]@{ Algorithm = $algorithm; Value = [string]$entry.VendorHash.Value; Source = [string]$entry.VendorHash.Source }
+        }
+        $pair.Add([pscustomobject]@{
+                Owner = $each.Owner
+                Entry = [pscustomobject]@{
+                    RelativePath = $path
+                    SourcePath   = $source
+                    Group        = $group.Id
+                    Size         = [long]$length
+                    Sha256       = $sha256
+                    VendorHash   = $vendorHash
+                }
+            })
     }
 
     $destination = [System.Collections.Generic.List[object]]::new()
@@ -275,7 +289,7 @@ function Get-KitStagePlan {
             throw "Two entries differ only in letter case: $($other.Entry.RelativePath) ($ownerA) and $($each.Entry.RelativePath) ($ownerB); FAT32 treats them as one file"
         }
     }
-    [pscustomobject]@{ Pair = $pair.ToArray(); Destination = $destination.ToArray() }
+    [pscustomobject]@{ Pair = $pair.ToArray(); Destination = $destination.ToArray(); Capture = $capture.ToArray() }
 }
 
 function ConvertTo-KitManifestFile {
@@ -412,6 +426,17 @@ function Get-KitStageManifest {
             if (-not $each.Owner -and $listedShared.Add($each.Entry.RelativePath)) { ConvertTo-KitManifestFile -Entry $each.Entry }
         })
 
+    $diagnostics = $null
+    if (@($Plan.Capture).Count -gt 0) {
+        $firstCapture = $Plan.Capture[0]
+        $diagnostics = [ordered]@{
+            name      = [string]$firstCapture.Name
+            packageId = [string]$firstCapture.PackageId
+            version   = [string]$firstCapture.Version
+            fileCount = [int]$firstCapture.FileCount
+        }
+    }
+
     $unverified = @($StagedGroup | Where-Object { $_.Verified.Status -ne $true })
     $manifest = [ordered]@{
         schemaVersion = 1
@@ -425,7 +450,7 @@ function Get-KitStageManifest {
         groups        = $group
         models        = $models
         shared        = $shared
-        diagnostics   = $null
+        diagnostics   = $diagnostics
     }
     $manifest
 }
