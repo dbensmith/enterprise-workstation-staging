@@ -112,3 +112,189 @@ Describe 'HP device identity' {
         Should -Invoke Get-ItemPropertyValue -ModuleName HP.Target -Exactly 1 -ParameterFilter { $Name -eq 'BaseBoardProduct' -and $Path -eq 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS' }
     }
 }
+
+Describe 'HP driver install' {
+    BeforeAll {
+        Mock Invoke-KitTool -ModuleName HP.Target { }
+        $script:driverPackage = Join-Path $TestDrive 'driver-pkg'
+        $null = New-Item -Path (Join-Path $script:driverPackage 'Drivers') -ItemType Directory -Force
+        $script:emptyPackage = Join-Path $TestDrive 'empty-pkg'
+        $null = New-Item -Path $script:emptyPackage -ItemType Directory -Force
+    }
+
+    It 'injects the drivers into an offline image with DISM' {
+        $result = Install-HPKitDriver -PackagePath $script:driverPackage -OfflineImagePath 'C:\Mount\install'
+        $expected = @('/Image:C:\Mount\install', '/Add-Driver', "/Driver:$script:driverPackage\Drivers", '/Recurse') -join '|'
+        Should -Invoke Invoke-KitTool -ModuleName HP.Target -Exactly 1 -ParameterFilter { $FilePath -eq 'dism.exe' -and ($ArgumentList -join '|') -eq $expected }
+        $result.Operation | Should -Be 'InstallDrivers'
+        $result.Mode | Should -Be 'Offline'
+        $result.Result | Should -Be 'SUCCESS'
+    }
+    It 'stages and installs the drivers online with pnputil' {
+        $result = Install-HPKitDriver -PackagePath $script:driverPackage
+        $expected = @('/add-driver', "$script:driverPackage\Drivers\*.inf", '/subdirs', '/install') -join '|'
+        Should -Invoke Invoke-KitTool -ModuleName HP.Target -Exactly 1 -ParameterFilter {
+            $FilePath -eq 'pnputil.exe' -and ($ArgumentList -join '|') -eq $expected -and
+            ($OkCode -contains 0) -and ($OkCode -contains 3010) -and ($OkCode -contains 259) -and ($OkCode -contains -536870365)
+        }
+        $result.Mode | Should -Be 'Online'
+        $result.Result | Should -Be 'SUCCESS'
+    }
+    It 'skips cleanly when the package has no Drivers folder' {
+        $result = Install-HPKitDriver -PackagePath $script:emptyPackage
+        Should -Invoke Invoke-KitTool -ModuleName HP.Target -Exactly 0
+        @($result).Count | Should -Be 1
+        $result.Result | Should -Be 'SKIPPED'
+    }
+    It 'passes -WhatIf through to the native tool wrapper' {
+        $null = Install-HPKitDriver -PackagePath $script:driverPackage -WhatIf
+        Should -Invoke Invoke-KitTool -ModuleName HP.Target -Exactly 1 -ParameterFilter { $WhatIf }
+    }
+    It 'does not pass -WhatIf when it was not asked for' {
+        $null = Install-HPKitDriver -PackagePath $script:driverPackage
+        Should -Invoke Invoke-KitTool -ModuleName HP.Target -Exactly 0 -ParameterFilter { $WhatIf }
+    }
+    It 'lets a failing tool propagate' {
+        Mock Invoke-KitTool -ModuleName HP.Target { throw 'pnputil.exe failed: exit 1' }
+        { Install-HPKitDriver -PackagePath $script:driverPackage } | Should -Throw '*pnputil.exe failed*'
+    }
+}
+
+Describe 'HP firmware install' {
+    BeforeAll {
+        # Get-BitLockerVolume and Suspend-BitLocker exist only where the BitLocker module is installed; Pester needs a command to mock.
+        $script:definedStubs = @()
+        foreach ($stub in 'Get-BitLockerVolume', 'Suspend-BitLocker') {
+            if (-not (Get-Command -Name $stub -ErrorAction SilentlyContinue)) {
+                Set-Item -Path "Function:\global:$stub" -Value { param($MountPoint, $RebootCount) }
+                $script:definedStubs += $stub
+            }
+        }
+
+        $newItem = {
+            param($Id, $Category, $Path, $File, [bool]$Auto, [bool]$Reboot)
+            [ordered]@{
+                Id             = $Id
+                Name           = "Item $Id"
+                Version        = '1.0'
+                Category       = $Category
+                Path           = $Path
+                AutoInstall    = $Auto
+                RebootRequired = $Reboot
+                Devices        = @()
+                SilentInstall  = @{ File = $File; Arguments = '-s' }
+                ReturnCodes    = @{
+                    '3010' = @{ Result = 'SUCCESS'; Message = 'Restart required' }
+                    '290'  = @{ Result = 'CANCEL'; Message = 'BitLocker is on' }
+                }
+            }
+        }
+        $newPackage = {
+            param($Name, $Items, $Files)
+            $root = Join-Path $TestDrive $Name
+            $null = New-Item -Path $root -ItemType Directory -Force
+            foreach ($file in $Files) { $null = New-Item -Path (Join-Path $root $file) -ItemType File -Force }
+            ConvertTo-Json -InputObject @{ Firmware = @($Items) } -Depth 8 | Set-Content -Path (Join-Path $root 'manifest.json')
+            $root
+        }
+
+        # The BIOS is listed first on purpose: the install order must not follow the manifest order.
+        $bios = & $newItem 'bios1' 'BIOS - System Firmware' 'Firmware/bios1' 'HpFirmwareUpdRec64.exe' $true $true
+        $nic = & $newItem 'nic1' 'Firmware' 'Firmware/nic1' 'setup.exe' $true $false
+        $ssd = & $newItem 'ssd1' 'Firmware' 'Firmware/ssd1' 'ssd.exe' $false $false
+        $script:package = & $newPackage 'fw-pkg' @($bios, $nic, $ssd) @('Firmware\bios1\HpFirmwareUpdRec64.exe', 'Firmware\nic1\setup.exe', 'Firmware\ssd1\ssd.exe')
+        $script:missingPackage = & $newPackage 'fw-missing' @($nic) @()
+        $escape = & $newItem 'evil1' 'Firmware' '..\outside' 'evil.exe' $true $false
+        $script:escapePackage = & $newPackage 'fw-escape' @($escape) @('..\outside\evil.exe')
+        $script:noRebootPackage = & $newPackage 'fw-noreboot' @($nic) @('Firmware\nic1\setup.exe')
+
+        Mock Start-Process -ModuleName HP.Target {
+            $script:launched.Add($FilePath)
+            [pscustomobject]@{ ExitCode = $script:exitCodes[(Split-Path -Path (Split-Path -Path $FilePath -Parent) -Leaf)] }
+        }
+        Mock Get-FirmwareSkipReason -ModuleName HP.Target { }
+        Mock Get-BitLockerVolume -ModuleName HP.Target { [pscustomobject]@{ ProtectionStatus = 'On' } }
+        Mock Suspend-BitLocker -ModuleName HP.Target { }
+    }
+    BeforeEach {
+        $script:launched = [System.Collections.Generic.List[string]]::new()
+        $script:exitCodes = @{ bios1 = 0; nic1 = 0; ssd1 = 0; evil1 = 0 }
+    }
+    AfterAll {
+        foreach ($stub in $script:definedStubs) { Remove-Item -Path "Function:\global:$stub" }
+    }
+
+    It 'reports a manual-only item as MANUAL without launching it' {
+        $results = @(Install-HPKitFirmware -PackagePath $script:package)
+        $manual = $results | Where-Object Id -EQ 'ssd1'
+        $manual.Result | Should -Be 'MANUAL'
+        $manual.Operation | Should -Be 'InstallFirmware'
+        $script:launched | Should -Not -Contain (Join-Path $script:package 'Firmware\ssd1\ssd.exe')
+    }
+    It 'runs the BIOS last' {
+        $null = Install-HPKitFirmware -PackagePath $script:package
+        $script:launched.Count | Should -Be 2
+        Split-Path -Path $script:launched[0] -Leaf | Should -Be 'setup.exe'
+        Split-Path -Path $script:launched[1] -Leaf | Should -Be 'HpFirmwareUpdRec64.exe'
+    }
+    It 'maps exit code <code> to <expected>' -ForEach @(
+        @{ code = 0; expected = 'SUCCESS' }
+        @{ code = 3010; expected = 'SUCCESS' }
+        @{ code = 290; expected = 'CANCEL' }
+        @{ code = 7; expected = 'FAILURE' }
+    ) {
+        $script:exitCodes.nic1 = $code
+        $result = Install-HPKitFirmware -PackagePath $script:package | Where-Object Id -EQ 'nic1'
+        $result.Result | Should -Be $expected
+        $result.ExitCode | Should -Be $code
+    }
+    It 'reports a missing executable as FAILURE without launching it' {
+        $result = Install-HPKitFirmware -PackagePath $script:missingPackage
+        $result.Result | Should -Be 'FAILURE'
+        $result.Detail | Should -BeLike '*executable not found*'
+        Should -Invoke Start-Process -ModuleName HP.Target -Exactly 0
+    }
+    It 'reports a path outside the package Firmware folder as FAILURE without launching it' {
+        $result = Install-HPKitFirmware -PackagePath $script:escapePackage
+        $result.Result | Should -Be 'FAILURE'
+        Should -Invoke Start-Process -ModuleName HP.Target -Exactly 0
+    }
+    It 'reports a launch error as FAILURE' {
+        Mock Start-Process -ModuleName HP.Target { throw 'access denied' }
+        $result = Install-HPKitFirmware -PackagePath $script:noRebootPackage
+        $result.Result | Should -Be 'FAILURE'
+        $result.Detail | Should -BeLike '*access denied*'
+    }
+    It 'skips an item the gate flags, and does not suspend BitLocker for it' {
+        Mock Get-FirmwareSkipReason -ModuleName HP.Target { 'BIOS 1.36.0 already current (package 1.36.0)' } -ParameterFilter { $Firmware.Category -like 'BIOS*' }
+        $results = @(Install-HPKitFirmware -PackagePath $script:package)
+        $bios = $results | Where-Object Id -EQ 'bios1'
+        $bios.Result | Should -Be 'SKIPPED'
+        $bios.Detail | Should -BeLike '*already current*'
+        Should -Invoke Start-Process -ModuleName HP.Target -Exactly 1
+        Should -Invoke Suspend-BitLocker -ModuleName HP.Target -Exactly 0
+    }
+    It 'suspends BitLocker on the system drive for one reboot when the BIOS will run' {
+        $null = Install-HPKitFirmware -PackagePath $script:package
+        Should -Invoke Suspend-BitLocker -ModuleName HP.Target -Exactly 1 -ParameterFilter { $MountPoint -eq $env:SystemDrive -and $RebootCount -eq 1 }
+    }
+    It 'does not suspend BitLocker when protection is off' {
+        Mock Get-BitLockerVolume -ModuleName HP.Target { [pscustomobject]@{ ProtectionStatus = 'Off' } }
+        $null = Install-HPKitFirmware -PackagePath $script:package
+        Should -Invoke Suspend-BitLocker -ModuleName HP.Target -Exactly 0
+    }
+    It 'does not suspend BitLocker when no item that will run needs a reboot' {
+        $null = Install-HPKitFirmware -PackagePath $script:noRebootPackage
+        Should -Invoke Suspend-BitLocker -ModuleName HP.Target -Exactly 0
+    }
+    It 'warns and carries on when BitLocker cannot be suspended' {
+        Mock Suspend-BitLocker -ModuleName HP.Target { throw 'no TPM' }
+        $results = @(Install-HPKitFirmware -PackagePath $script:package -WarningAction SilentlyContinue)
+        ($results | Where-Object Id -EQ 'bios1').Result | Should -Be 'SUCCESS'
+    }
+    It 'runs nothing and suspends nothing under -WhatIf' {
+        $null = Install-HPKitFirmware -PackagePath $script:package -WhatIf
+        Should -Invoke Start-Process -ModuleName HP.Target -Exactly 0
+        Should -Invoke Suspend-BitLocker -ModuleName HP.Target -Exactly 0
+    }
+}
