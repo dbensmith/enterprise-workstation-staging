@@ -1,26 +1,56 @@
 #Requires -Version 5.1
-#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-Apply an HP driver/firmware baseline package built by Build-HPDriverBaseline.ps1.
+Apply a driver and firmware baseline package to this laptop, whatever the vendor.
 
 .DESCRIPTION
-Runs from the package root (next to manifest.json). Standalone: HPCMSL is not needed on the target.
-  Online  (default): stage+install drivers with pnputil, then run auto-install firmware (BIOS last),
-                     suspending BitLocker for one reboot first. Refuses to run on a different
-                     platform unless -Force.
-  Offline (-OfflineImagePath): inject drivers into a mounted Windows image with DISM. Firmware is skipped;
+Runs from the kit folder and takes the package as a parameter. Standalone: no vendor build tool is
+needed on the laptop. The vendor comes from -Vendor, else the package manifest's Vendor, else the
+laptop's manufacturer, and every vendor step runs through the common module's vendor interface.
+  Online  (default): stage and install the drivers, then run the auto-install firmware items
+                     (BIOS last). Refuses to run on a different platform unless -Force.
+  Offline (-OfflineImagePath): inject the drivers into a mounted Windows image. Firmware is skipped;
                      it cannot be serviced offline.
+-LogPath keeps a transcript of the whole run, written even when the run fails.
 Exit code 0 = all good, 1 = at least one step failed. Reboot after an online run.
+The installer never reads the run-time config, so nothing secret can reach the transcript.
+
+.PARAMETER PackagePath
+The package root (the folder that holds manifest.json).
+
+.PARAMETER OfflineImagePath
+A mounted Windows image folder. When given, drivers are injected into it and firmware is skipped.
+
+.PARAMETER SkipFirmware
+Install drivers only.
+
+.PARAMETER Force
+Apply even if the board's platform ID does not match the manifest.
+
+.PARAMETER LogPath
+Write a transcript of the run to this file (appended).
+
+.PARAMETER Vendor
+Vendor name (for example HP). Defaults to the manifest's Vendor, then to the laptop's manufacturer.
 
 .EXAMPLE
-.\Install-HPDriverBaseline.ps1 -WhatIf
+.\Install-DriverBaseline.ps1 -PackagePath D:\Packages\hp\840-g6\win11-24H2 -WhatIf
+Lists the steps without running them.
 
 .EXAMPLE
-.\Install-HPDriverBaseline.ps1 -OfflineImagePath C:\Mount\install
+.\Install-DriverBaseline.ps1 -PackagePath D:\Packages\hp\840-g6\win11-24H2 -OfflineImagePath C:\Mount\install
+Injects the drivers into a mounted image.
+
+.EXAMPLE
+.\Install-DriverBaseline.ps1 -PackagePath C:\Kit\package -LogPath C:\Kit\firstboot.log
+The first-boot form: install and keep a transcript.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
+    [Parameter(Mandatory)]
+    [ValidateScript({ Test-Path (Join-Path $_ 'manifest.json') -PathType Leaf })]
+    [string]$PackagePath,
+
     [Alias('Path', 'ImagePath')]
     [ValidateScript({ Test-Path $_ -PathType Container })]
     [string]$OfflineImagePath,
@@ -28,59 +58,47 @@ param(
     [switch]$SkipFirmware,
 
     # Apply even if the board's platform ID does not match the manifest.
-    [switch]$Force
+    [switch]$Force,
+
+    [string]$LogPath,
+
+    [string]$Vendor
 )
 
 $ErrorActionPreference = 'Stop'
 $InformationPreference = 'Continue'
+Write-Verbose "Transcript path: $LogPath"
 
-$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-
-Set-Service winmgmt -StartupType Automatic
-$svc = Get-Service winmgmt -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -ne 'Running') {
-    Start-Service winmgmt
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin -and -not $WhatIfPreference) {
+    throw 'Run from an elevated session (Run.cmd elevates for you), or add -WhatIf.'
 }
 
-$manifest = Get-Content (Join-Path $scriptRoot 'manifest.json') -Raw | ConvertFrom-Json
-$driverDir = Join-Path $scriptRoot 'Drivers'
+Import-Module (Join-Path $PSScriptRoot 'core\Kit.Core.psd1') -Force
+
+$packageRoot = (Resolve-Path -LiteralPath $PackagePath).ProviderPath
+$manifest = Get-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Raw | ConvertFrom-Json
 $script:failures = 0
 
-function Invoke-Tool {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [Parameter(Position = 0, Mandatory = $true)]
-        [string]$Exe,
-
-        [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
-        [string[]]$ArgList,
-
-        [int[]]$OkCodes = @(0, 3010)
-    )
-    $escapedArgs = ($ArgList | ForEach-Object {
-        if ($_ -eq '') {
-            '""'
-        } elseif ($_ -notmatch '[\s"]') {
-            $_
-        } else {
-            # Win32 CreateProcess argv escaping: double backslashes immediately
-            # preceding a quote (or end of string, once wrapped), then escape the quote itself.
-            $escaped = [regex]::Replace($_, '(\\*)"', '$1$1\"')
-            $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
-            "`"$escaped`""
-        }
-    }) -join ' '
-    if (-not $PSCmdlet.ShouldProcess("$Exe $escapedArgs", 'Execute')) { return }
-    $p = Start-Process -FilePath $Exe -ArgumentList $escapedArgs -Wait -PassThru -NoNewWindow
-    if ($OkCodes -notcontains $p.ExitCode) { throw "$Exe failed: exit $($p.ExitCode)" }
-    if ($p.ExitCode -ne 0) { Write-Warning "$Exe exit $($p.ExitCode) (accepted)" }
+$kitVendor = if ($Vendor) {
+    Get-KitVendor -Name $Vendor
+}
+elseif ($manifest.Vendor) {
+    Get-KitVendor -Name $manifest.Vendor
+}
+else {
+    Get-KitVendor -Manufacturer (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
 }
 
-Write-Information "Baseline: $($manifest.Profile) [$($manifest.Platform)] $($manifest.Os) $($manifest.OsVer), built $($manifest.BuiltUtc)"
+Write-Information "Baseline: $($manifest.Profile) [$($manifest.Platform)] $($manifest.Os) $($manifest.OsVer), built $($manifest.BuiltUtc) (vendor $($kitVendor.Name))"
+
+# Preference variables do not reach module functions, so -WhatIf travels in the parameter table.
+$stepParameters = @{ PackagePath = $packageRoot; WhatIf = [bool]$WhatIfPreference }
 
 if ($OfflineImagePath) {
+    $stepParameters.OfflineImagePath = $OfflineImagePath
     try {
-        Invoke-Tool dism.exe "/Image:$OfflineImagePath", '/Add-Driver', "/Driver:$driverDir", '/Recurse'
+        $null = Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters
     }
     catch {
         Write-Error $_.Exception.Message -ErrorAction Continue
@@ -89,71 +107,41 @@ if ($OfflineImagePath) {
     exit [int]($script:failures -gt 0)
 }
 
-$board = (Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue).Product
-if (-not $board) {
-    $board = Get-ItemPropertyValue -Path 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS' -Name 'BaseBoardProduct' -ErrorAction SilentlyContinue
-}
-$board = if ($board) { "$board".Trim() } else { $null }
-if ($board -ne $manifest.Platform -and -not $Force) {
-    throw "This board is platform '$board'; package targets '$($manifest.Platform)'. Use -Force to override."
+Set-Service winmgmt -StartupType Automatic
+$svc = Get-Service winmgmt -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -ne 'Running') {
+    Start-Service winmgmt
 }
 
-if (Test-Path $driverDir) {
-    # 259 = drivers staged but no present device needed them; -536870365 (0xE0000223) = driver does not apply to this hardware variant.
-    Invoke-Tool pnputil.exe '/add-driver', "$driverDir\*.inf", '/subdirs', '/install' -OkCodes 0, 3010, 259, -536870365
+$identity = Invoke-KitVendorCommand -Vendor $kitVendor -Operation GetDeviceIdentity
+if ($identity.PlatformId -ne $manifest.Platform -and -not $Force) {
+    throw "This board is platform '$($identity.PlatformId)'; package targets '$($manifest.Platform)'. Use -Force to override."
+}
+
+try {
+    foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters)) {
+        if ($row.Result -eq 'FAILURE') {
+            Write-Error "FAIL $($row.Name): $($row.Detail)" -ErrorAction Continue
+            $script:failures++
+        }
+        else {
+            Write-Information "$($row.Result) $($row.Name): $($row.Detail)"
+        }
+    }
+}
+catch {
+    Write-Error $_.Exception.Message -ErrorAction Continue
+    $script:failures++
 }
 
 if (-not $SkipFirmware) {
-    $firmware = @($manifest.Firmware | Where-Object { $_ })
-    foreach ($fw in $firmware | Where-Object { -not $_.AutoInstall }) {
-        Write-Warning "Manual firmware (no silent install, or device-specific): $($fw.Id) $($fw.Name) $($fw.Version) -> $($fw.Path)"
-    }
-
-    # BIOS last: it schedules the flash for the next reboot.
-    $auto = @($firmware | Where-Object AutoInstall | Sort-Object { $_.Category -like 'BIOS*' })
-    if ($auto | Where-Object RebootRequired) {
-        # HpFirmwareUpdRec returns 290 in silent mode while BitLocker protection is on.
-        if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
-            $bl = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction SilentlyContinue
-            if ($bl -and $bl.ProtectionStatus -eq 'On') {
-                if ($PSCmdlet.ShouldProcess($env:SystemDrive, 'Suspend BitLocker for 1 reboot')) {
-                    try {
-                        $null = Suspend-BitLocker -MountPoint $env:SystemDrive -RebootCount 1 -ErrorAction Stop
-                    }
-                    catch {
-                        Write-Warning "Could not suspend BitLocker on $env:SystemDrive`: $($_.Exception.Message)"
-                    }
-                }
-            }
-        }
-    }
-
-    foreach ($fw in $auto) {
-        $dir = Join-Path $scriptRoot $fw.Path
-        $exe = Join-Path $dir $fw.SilentInstall.File
-        if (-not (Test-Path -LiteralPath $exe)) {
-            Write-Error "FAIL $($fw.Id) $($fw.Name): executable not found ($exe)" -ErrorAction Continue
+    foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallFirmware -Parameters $stepParameters)) {
+        if ($row.Result -eq 'FAILURE') {
+            Write-Error "FAIL $($row.Id) $($row.Name): $($row.Detail)" -ErrorAction Continue
             $script:failures++
-            continue
         }
-        if (-not $PSCmdlet.ShouldProcess("$($fw.Id) $($fw.Name) $($fw.Version)", "Run $($fw.SilentInstall.File) $($fw.SilentInstall.Arguments)")) { continue }
-
-        try {
-            $code = (Start-Process -FilePath $exe -ArgumentList $fw.SilentInstall.Arguments -WorkingDirectory $dir -Wait -PassThru -NoNewWindow).ExitCode
-        }
-        catch {
-            Write-Error "FAIL $($fw.Id) $($fw.Name): failed to launch ($($_.Exception.Message))" -ErrorAction Continue
-            $script:failures++
-            continue
-        }
-
-        $known = $fw.ReturnCodes."$code"
-        $result = if ($known) { $known.Result } elseif ($code -eq 0) { 'SUCCESS' } else { 'FAILURE' }
-        $detail = "$($fw.Id) $($fw.Name): exit $code $(if ($known) { "- $($known.Message)" })"
-        switch ($result) {
-            'SUCCESS' { Write-Information "OK   $detail" }
-            'CANCEL' { Write-Warning "SKIP $detail" }
-            default { Write-Error "FAIL $detail" -ErrorAction Continue; $script:failures++ }
+        elseif ($row.Result -eq 'SKIPPED') {
+            Write-Information "SKIP $($row.Id) $($row.Name): $($row.Detail)"
         }
     }
 }
