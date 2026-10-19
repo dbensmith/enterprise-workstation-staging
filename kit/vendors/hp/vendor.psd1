@@ -19,6 +19,7 @@
         GetVendorPack               = 'Save-HPKitVendorPack'
         NewCustomPack               = 'New-HPKitCustomPack'
         GetFirmware                 = 'Save-HPKitFirmware'
+        GetFirmwareStickLayout      = 'Get-HPKitFirmwareStickLayout'
         InstallDrivers              = 'Install-HPKitDriver'
         InstallFirmware             = 'Install-HPKitFirmware'
         GetDeviceIdentity           = 'Get-HPKitDeviceIdentity'

@@ -361,3 +361,13 @@ Describe 'Get-HPKitFirmwareStickLayout' {
         }
     }
 }
+
+# Last on purpose: Test-KitVendorContract re-imports the HP build module and removes it again, which would
+# detach the mocks of the Describe above from the module the tests call.
+Describe 'HP descriptor' {
+    It 'maps GetFirmwareStickLayout to Get-HPKitFirmwareStickLayout and satisfies the vendor contract' {
+        $descriptor = Join-Path $PSScriptRoot '..\kit\vendors\hp\vendor.psd1'
+        (Import-PowerShellDataFile -LiteralPath $descriptor).Commands.GetFirmwareStickLayout | Should -Be 'Get-HPKitFirmwareStickLayout'
+        @(Test-KitVendorContract -DescriptorPath $descriptor) | Should -HaveCount 0
+    }
+}

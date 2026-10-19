@@ -9,6 +9,7 @@
         GetVendorPack               = 'Save-FixtureKitVendorPack'
         NewCustomPack               = 'New-FixtureKitCustomPack'
         GetFirmware                 = 'Save-FixtureKitFirmware'
+        GetFirmwareStickLayout      = 'Get-FixtureKitFirmwareStickLayout'
         InstallDrivers              = 'Install-FixtureKitDriver'
         InstallFirmware             = 'Install-FixtureKitFirmware'
         GetDeviceIdentity           = 'Get-FixtureKitDeviceIdentity'

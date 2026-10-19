@@ -117,3 +117,60 @@ Describe 'Get-FixtureKitFirmwareStickLayout' {
         $message | Should -BeLike '*F00_000100.bin*'
     }
 }
+
+Describe 'GetFirmwareStickLayout contract entry' {
+    BeforeAll {
+        $script:contract = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot '..\kit\core\VendorContract.psd1')
+        $script:operations = @($script:contract.Operations)
+        $script:names = @($script:operations | ForEach-Object { $_.Name })
+    }
+
+    It 'holds nine entries' {
+        $script:operations | Should -HaveCount 9
+    }
+
+    It 'is a Build operation with the three pinned parameters' {
+        $entry = $script:operations | Where-Object { $_.Name -eq 'GetFirmwareStickLayout' }
+        @($entry) | Should -HaveCount 1
+        $entry.Kind | Should -Be 'Operation'
+        $entry.Plane | Should -Be 'Build'
+        @($entry.Parameters) | Should -Be @('ModelProfile', 'PackagePath', 'LayoutPath')
+    }
+
+    It 'sits directly after GetFirmware' {
+        $script:names.IndexOf('GetFirmwareStickLayout') | Should -Be ($script:names.IndexOf('GetFirmware') + 1)
+    }
+}
+
+Describe 'GetFirmwareStickLayout through the vendor dispatcher' {
+    BeforeAll {
+        $script:fixtureVendor = Get-KitVendor -Name Fixture -VendorRoot $script:vendorsFolder
+        $script:dispatchProfile = Get-KitProfile -Path $script:m1Path
+    }
+
+    It 'accepts the operation name and reaches the fixture command' {
+        $built = Invoke-KitVendorCommand -Vendor $script:fixtureVendor -Operation GetFirmware -Parameters @{
+            ModelProfile = $script:dispatchProfile; OsVer = '24H2'; OutputPath = (Join-Path $TestDrive 'dispatch')
+        }
+        $result = Invoke-KitVendorCommand -Vendor $script:fixtureVendor -Operation GetFirmwareStickLayout -Parameters @{
+            ModelProfile = $script:dispatchProfile; PackagePath = $built.PackagePath; LayoutPath = ''
+        }
+        $result.Operation | Should -Be 'GetFirmwareStickLayout'
+        $result.Vendor | Should -Be 'Fixture'
+        $result.LayoutPath | Should -Be $script:fixtureLayout
+        @($result.Entries) | Should -HaveCount 5
+    }
+}
+
+Describe 'Vendor descriptors against the nine-entry contract' {
+    It 'reports no violation for the complete fixture' {
+        @(Test-KitVendorContract -DescriptorPath (Join-Path $script:vendorsFolder 'complete\vendor.psd1')) | Should -HaveCount 0
+    }
+
+    It 'reports exactly one violation, MissingOperation InstallDrivers, for the missing-op fixture' {
+        $found = @(Test-KitVendorContract -DescriptorPath (Join-Path $script:vendorsFolder 'missing-op\vendor.psd1'))
+        $found | Should -HaveCount 1
+        $found[0].Kind | Should -Be 'MissingOperation'
+        $found[0].Operation | Should -Be 'InstallDrivers'
+    }
+}
