@@ -23,6 +23,8 @@
         'Get-KitVerifiedValue'
         'Get-KitConfig'
         'Get-KitPublishFile'
+        'Test-FirmwareStage'
+        'Show-FirmwareStageFinding'
     )
     CmdletsToExport       = @()
     VariablesToExport     = @()
