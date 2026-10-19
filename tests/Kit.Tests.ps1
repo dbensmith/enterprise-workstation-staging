@@ -205,3 +205,52 @@ Describe 'Run.ps1 config presence and elevation' {
         (Get-Content -LiteralPath $log -Raw) | Should -Not -Match $secret
     }
 }
+
+Describe 'Audit entry points' {
+    BeforeAll {
+        $script:audit = Join-Path $script:repo 'kit\Test-DeviceBaseline.ps1'
+    }
+    It 'runs from Run.cmd on the stick and saves the result file' {
+        $out = Join-Path $TestDrive 'audit.txt'
+        $run = Invoke-KitChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', 'kit\Run.cmd', '-Mode', 'Audit', '-OutFile', $out)
+        $run.ExitCode | Should -Be 0
+        $out | Should -Exist
+        (Get-Content -LiteralPath $out -Raw) | Should -Match ' SERIAL     : '
+    }
+    It 'runs as plain text with no script folder, the way irm | iex runs it' {
+        $out = Join-Path $TestDrive 'web.txt'
+        $previous = $env:PK_OUTFILE
+        $env:PK_OUTFILE = $out
+        try {
+            $command = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$($script:audit)')))"
+            $run = Invoke-KitChild -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $command) -WorkingDirectory $TestDrive
+        }
+        finally {
+            if ($null -eq $previous) { Remove-Item -Path Env:\PK_OUTFILE -ErrorAction SilentlyContinue } else { $env:PK_OUTFILE = $previous }
+        }
+        # A -Command exit status only reflects the last statement, so assert on the file and the output.
+        $out | Should -Exist
+        (Get-Content -LiteralPath $out -Raw) | Should -Match ' SERIAL     : '
+        $run.Output | Should -Match 'Saved: '
+    }
+    It 'leaves nothing at the old src path' {
+        "$(& git -C $script:repo ls-files src/Test-DeviceBaseline.ps1)" | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $script:repo 'src\Test-DeviceBaseline.ps1') | Should -BeFalse
+    }
+    It 'stays self-contained and keeps the removable-only default' {
+        $text = Get-Content -LiteralPath $script:audit -Raw
+        $text | Should -Match ([regex]::Escape('$env:PK_OUTFILE'))
+        $text | Should -Match ([regex]::Escape('[string]$OutFile'))
+        $text | Should -Match 'Read-Host'
+        $text | Should -Match ([regex]::Escape("DriveType -eq 'Removable'"))
+        $ast = Read-ScriptAst -Path $script:audit
+        $commands = Get-CommandNameList -Ast $ast
+        $commands | Should -Not -Contain 'Import-Module'
+        $dotSourced = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot
+                }, $true))
+        $dotSourced.Count | Should -Be 0
+    }
+}
