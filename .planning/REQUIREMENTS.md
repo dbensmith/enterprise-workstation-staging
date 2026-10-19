@@ -16,9 +16,9 @@
 
 ### Secrets
 
-- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (third-party installer links, MSI properties, tokens)
+- [x] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (third-party installer links, MSI properties, tokens)
 - [x] **SEC-02**: Operator supplies secrets at run time via a gitignored local config, the Tools stick, or parameters; a committed `.example` config documents the schema
-- [ ] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
+- [x] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
 
 ### Build
 
@@ -133,9 +133,9 @@
 | REPO-04 | Phase 1 | Complete |
 | REPO-05 | Phase 1 | Complete |
 | REPO-06 | Phase 1 | Complete |
-| SEC-01 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Complete |
 | SEC-02 | Phase 1 | Complete |
-| SEC-03 | Phase 1 | Pending |
+| SEC-03 | Phase 1 | Complete |
 | BUILD-01 | Phase 2 | Pending |
 | BUILD-02 | Phase 4 | Pending |
 | BUILD-03 | Phase 4 | Pending |
