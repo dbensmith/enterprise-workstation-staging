@@ -21,6 +21,20 @@ BeforeAll {
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($script:buildScript, [ref]$tokens, [ref]$errors)
     }
+
+    $script:buildCmd = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\Build.cmd'))
+
+    # Run a native child and return its exit code and merged output. A local Continue lets native stderr through
+    # without becoming a terminating error under 5.1.
+    function Invoke-BuilderChild {
+        param(
+            [Parameter(Mandatory)][string]$FilePath,
+            [string[]]$ArgumentList = @()
+        )
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $FilePath @ArgumentList 2>&1 | ForEach-Object { "$_" })
+        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
+    }
 }
 
 Describe 'Build-DriverBaseline through the vendor interface' {
@@ -107,5 +121,40 @@ Describe 'Build-DriverBaseline script shape' {
         }
         $operations | Should -Contain 'NewCustomPack'
         $operations | Should -Contain 'GetFirmware'
+    }
+}
+
+Describe 'Build.cmd launcher' {
+    It 'is stored with CRLF line endings only' {
+        $bytes = [IO.File]::ReadAllBytes($script:buildCmd)
+        $lf = @($bytes | Where-Object { $_ -eq 10 }).Count
+        $crlf = 0
+        for ($i = 1; $i -lt $bytes.Length; $i++) {
+            if ($bytes[$i] -eq 10 -and $bytes[$i - 1] -eq 13) { $crlf++ }
+        }
+        $lf | Should -BeGreaterThan 0
+        $crlf | Should -Be $lf
+    }
+    It 'clears PSModulePath and starts 5.1 with a process-scope bypass on the build script beside it' {
+        $text = Get-Content -LiteralPath $script:buildCmd -Raw
+        $text | Should -Match ([regex]::Escape('set "PSModulePath="'))
+        $text | Should -Match ([regex]::Escape('-ExecutionPolicy Bypass'))
+        $text | Should -Match ([regex]::Escape('"%~dp0builder\Build-DriverBaseline.ps1" %*'))
+        $text | Should -Match ([regex]::Escape('exit /b %ERRORLEVEL%'))
+        $text | Should -Match ([regex]::Escape('%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'))
+    }
+    It 'builds the fixture package from cmd.exe and writes its manifest' {
+        $output = Join-Path $TestDrive 'cmd-build'
+        $run = Invoke-BuilderChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', $script:buildCmd,
+            '-Vendor', 'Fixture', '-VendorRoot', $script:vendorRoot, '-ProfilePath', $script:profilePath, '-OutputRoot', $output)
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        $manifestPath = Join-Path $output 'fixture\m1\win11-24H2\manifest.json'
+        $manifestPath | Should -Exist
+        (Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).Vendor | Should -Be 'Fixture'
+    }
+    It 'returns the build script exit code for a profile that does not exist' {
+        $run = Invoke-BuilderChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', $script:buildCmd,
+            '-Vendor', 'Fixture', '-VendorRoot', $script:vendorRoot, '-ProfilePath', (Join-Path $TestDrive 'missing.psd1'), '-OutputRoot', (Join-Path $TestDrive 'cmd-missing'))
+        $run.ExitCode | Should -Not -Be 0
     }
 }
