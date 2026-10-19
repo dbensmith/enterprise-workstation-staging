@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Modular Foundation
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-10-19T00:32:49.959Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-10-19T00:46:11.357Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 1 execution started
-state_head: 50da2c0a1554dcac8c2e4eadb1fa74bd9397da6b
+state_head: 06c846680c7d05e5ea91b2afd81f810edb3a0737
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 ## Current Position
 
 Phase: 1 (Modular Foundation) — EXECUTING
-Plan: 4 of 8
+Plan: 5 of 8
 Status: Ready to execute
 Last activity: 2026-10-18 — Phase 1 execution started
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 |------|----------|-------|-------|
 | Phase 1 P01 | 20min | 3 tasks | 12 files |
 | Phase 1 P03 | 18min | 3 tasks | 9 files |
+| Phase 01 P04 | 25min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Roadmap]: IMG-05 (blank `User` password) sits in Phase 5 with first logon, because the second-logon outcome depends on the first-logon account steps and the autologon cleanup
 - [Roadmap]: IMG-09 (combined image) is in Phase 7, after the per-model images (Phase 4) and platform-ID driver selection (Phase 5) are proven
 - [Phase 1]: [01-03] Vendor descriptors and contract table are data-only (Import-PowerShellDataFile); UnknownOperation counts as a descriptor-level contract failure
+- [Phase 01]: 01-04: Install-HPKitDriver calls ShouldProcess and still passes -WhatIf to Invoke-KitTool so a dry run prints the real command
+- [Phase 01]: 01-04: firmware items ordered non-BIOS then BIOS by partition, not Sort-Object (stable on 5.1)
 
 ### Pending Todos
 
@@ -96,6 +99,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T00:32:49.915Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-10-19T00:46:11.309Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
