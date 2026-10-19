@@ -1,0 +1,13 @@
+{
+  "SchemaVersion": 2,
+  "Profile": "Fixture package",
+  "Vendor": "HP",
+  "ModelId": "840-g6",
+  "Platform": "0000",
+  "Os": "win11",
+  "OsVer": "24H2",
+  "BuiltUtc": "2026-10-19T00:00:00Z",
+  "Drivers": [],
+  "Firmware": [],
+  "Excluded": []
+}
