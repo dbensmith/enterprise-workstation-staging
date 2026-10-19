@@ -69,11 +69,11 @@ Plans:
   4. The F2 menu on a G5 or G6 loads the latest UEFI diagnostics from the stick rather than the older built-in version
   5. The Tools stick carries a firmware manifest (model, platform ID, latest BIOS version, hash) and HP's Windows flash tool as a fallback
 
-**Plans**: 6 plans
+**Plans**: 1/6 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md - Core layout loader and stick validator (Test-FirmwareStage: hashes, FAT32 rules, closed folders, READY, phone-width output)
+- [x] 02-01-PLAN.md - Core layout loader and stick validator (Test-FirmwareStage: hashes, FAT32 rules, closed folders, READY, phone-width output)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-02-PLAN.md - GetFirmwareStickLayout contract operation, fixture vendor, HP layout data and BIOS image resolver
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Modular Foundation | 8/8 | In Progress | - |
-| 2. Tools Stick Firmware Staging | 0/6 | Not started | - |
+| 2. Tools Stick Firmware Staging | 1/6 | In Progress | - |
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
 | 5. Deploy and First Logon | 0/TBD | Not started | - |

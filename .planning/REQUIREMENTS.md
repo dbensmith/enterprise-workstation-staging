@@ -32,8 +32,8 @@
 ### Firmware Staging
 
 - [ ] **FW-01**: Builder stages BIOS files in the exact folder layout HP's pre-Windows USB flash tool reads, per model, on a FAT32 volume
-- [ ] **FW-02**: G5 and G6 BIOS images coexist on the Tools stick without overwriting each other's files
-- [ ] **FW-03**: Builder validates the staged layout (required paths present, hashes match) and fails loudly before the operator leaves
+- [x] **FW-02**: G5 and G6 BIOS images coexist on the Tools stick without overwriting each other's files
+- [x] **FW-03**: Builder validates the staged layout (required paths present, hashes match) and fails loudly before the operator leaves
 - [ ] **FW-04**: Builder stages HP's Windows flash tool as a fallback
 - [ ] **FW-05**: Builder stages the latest HP UEFI diagnostics in the folder the F2 menu loads from, alongside the BIOS layout
 - [ ] **FW-06**: The staged layout has been proven by flashing a real G5 and a real G6 from the stick via the pre-Windows menu
@@ -143,8 +143,8 @@
 | BUILD-05 | Phase 4 | Pending |
 | BUILD-06 | Phase 2 | Pending |
 | FW-01 | Phase 2 | Pending |
-| FW-02 | Phase 2 | Pending |
-| FW-03 | Phase 2 | Pending |
+| FW-02 | Phase 2 | Complete |
+| FW-03 | Phase 2 | Complete |
 | FW-04 | Phase 2 | Pending |
 | FW-05 | Phase 2 | Pending |
 | FW-06 | Phase 2 | Pending |
