@@ -53,3 +53,12 @@ Operator works from a phone: validator output must be short green/yellow/red lin
 <deferred>
 - Dell/Lenovo layouts. Automating the flash itself.
 </deferred>
+
+## Resolutions after research (autonomous defaults)
+
+- **R-01:** Superset staging. Each candidate placement (`BIOS\Current`, `BIOS\New`, `EFI\HP\BIOSUpdate`, etc. per 02-RESEARCH.md) is its own layout `Group` with its own `Verified` block; prune after the bench. `DEVFW\firmware.bin` only via `-FlashModel`.
+- **R-02:** New entry script `builder/Build-ToolsStick.ps1` (the master firmware build). `Build.cmd` and the README "Start here" three-command pin stay unchanged; the new script is documented in `docs/` and a README section outside "Start here".
+- **R-03:** Model ids are the real profile ids (`840-g5`, `840-g6`), not D-02's `840G5`. Kit copy onto the stick is opt-in `-IncludeKit`.
+- **R-04:** Keep Phase 1 download path; reuse downloads when SHA-256 matches. Do not flip G5 `PlatformVerified`. BIOS dependency chain: record the minimum from the CVA and warn, never stage the chain.
+- **R-05:** UEFI diagnostics capture is a manual HP GUI step on the builder; the builder takes a captured tree path (`-DiagnosticsSource`), snapshots it with hashes, and stages it. Without it the build stops red naming FW-05.
+- **R-06:** Follow the research "Repo traps" (pinned exports, ASCII only, -Depth 6, BOM-less JSON, Show-* for Write-Host, fake images created at run time).
