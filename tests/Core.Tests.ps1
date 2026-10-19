@@ -1,3 +1,9 @@
+BeforeDiscovery {
+    # The export list is data: one It per name, read from the manifest rather than copied into the test.
+    $script:manifestNames = @((Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot '..\kit\core\Kit.Core.psd1')).FunctionsToExport |
+            ForEach-Object { @{ Name = $_ } })
+}
+
 BeforeAll {
     $script:corePath = (Join-Path $PSScriptRoot '..\kit\core')
     $script:coreManifest = Join-Path $script:corePath 'Kit.Core.psd1'
@@ -190,5 +196,57 @@ Describe 'Native command wrapper' {
             Invoke-KitTool 'tool.exe' '/x' -WhatIf
             Should -Invoke Start-Process -ModuleName Kit.Core -Times 0 -Exactly
         }
+    }
+}
+
+Describe 'Get-KitPublishFile' {
+    BeforeAll {
+        # A throwaway kit that holds every kind of file the list must keep or drop.
+        $script:fakeKit = Join-Path $TestDrive 'kit'
+        foreach ($relative in 'Run.cmd', 'core\a.ps1', 'vendors\x\vendor.psd1', 'config.example.psd1', 'config.local.psd1',
+            'vendors\x\site.local.psd1', 'results\serial.txt', 'vendors\x\results\y.txt', 'apps\Results\z.txt') {
+            $file = Join-Path $script:fakeKit $relative
+            $null = New-Item -Path (Split-Path -Path $file -Parent) -ItemType Directory -Force
+            Set-Content -LiteralPath $file -Value 'x'
+        }
+        $script:listed = @(Get-KitPublishFile -Root $script:fakeKit)
+        $script:realList = @(Get-KitPublishFile)
+    }
+    It 'lists exactly the publishable files, sorted by relative path' {
+        @($script:listed.RelativePath) | Should -Be @('config.example.psd1', 'core\a.ps1', 'Run.cmd', 'vendors\x\vendor.psd1')
+    }
+    It 'gives each entry an existing full name' {
+        foreach ($entry in $script:listed) {
+            $entry.FullName | Should -Exist
+            $entry.FullName | Should -Be (Join-Path (Resolve-Path -LiteralPath $script:fakeKit).Path $entry.RelativePath)
+        }
+    }
+    It 'types each entry Kit.PublishFile' {
+        foreach ($entry in $script:listed) { $entry.PSObject.TypeNames | Should -Contain 'Kit.PublishFile' }
+    }
+    It 'never lists a local settings file or anything under a results folder at any depth' {
+        $names = @($script:listed.RelativePath)
+        $names | Should -Not -Contain 'config.local.psd1'
+        $names | Should -Not -Contain 'vendors\x\site.local.psd1'
+        @($names | Where-Object { $_ -match '(^|\)results(\|$)' }) | Should -BeNullOrEmpty
+    }
+    It 'defaults to the real kit folder and lists its launcher, installer and core manifest' {
+        $names = @($script:realList.RelativePath)
+        $names | Should -Contain 'Run.cmd'
+        $names | Should -Contain 'Install-DriverBaseline.ps1'
+        $names | Should -Contain 'core\Kit.Core.psd1'
+    }
+    It 'lists no local settings file and no results path from the real kit folder' {
+        @($script:realList.RelativePath | Where-Object { $_ -match '\.local\.psd1$' -or $_ -match '(^|\)results(\|$)' }) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Kit.Core exports' {
+    It 'resolves <Name> as a Kit.Core function' -ForEach $script:manifestNames {
+        Get-Command -Module Kit.Core -CommandType Function -Name $Name -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+    It 'exports exactly the functions the manifest lists' {
+        $listed = @((Import-PowerShellDataFile -Path $script:coreManifest).FunctionsToExport | Sort-Object)
+        @((Get-Module -Name Kit.Core).ExportedFunctions.Keys | Sort-Object) | Should -Be $listed
     }
 }
