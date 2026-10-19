@@ -9,7 +9,7 @@ BeforeAll {
     $script:otherValue = 'k3m8w'
 
     # A kit folder in TestDrive holding the real example, and a local file when LocalText is given.
-    function New-TestKitFolder {
+    function Write-TestKitFolder {
         param([Parameter(Mandatory)][string]$Name, [string[]]$LocalText)
         $folder = Join-Path $TestDrive $Name
         $null = New-Item -Path $folder -ItemType Directory -Force
@@ -49,7 +49,7 @@ Describe 'config.example.psd1' {
     It 'documents exactly the four third-party keys' {
         $example = Import-PowerShellDataFile -LiteralPath (Join-Path $script:kitFolder 'config.example.psd1')
         @($example.Keys) | Should -Be @('ThirdParty')
-        @($example.ThirdParty.Keys | Sort-Object) | Should -Be @('CustomerId', 'InstallToken', 'InstallerUrl', 'IntegratorLogin')
+        @($example.ThirdParty.Keys | Sort-Object) | Should -Be @('CustomerId', 'InstallToken', 'InstallerUrl', 'IntegratorLogin' | Sort-Object)
     }
 
     It 'holds only empty-string values' {
@@ -63,7 +63,7 @@ Describe 'config.example.psd1' {
 
 Describe 'Get-KitConfig' {
     It 'returns the empty defaults when there is no local file' {
-        $kit = New-TestKitFolder -Name 'defaults'
+        $kit = Write-TestKitFolder -Name 'defaults'
         $config = Get-KitConfig -Root $kit
         $config.Source | Should -Be 'Defaults'
         $config.LocalPath | Should -BeNullOrEmpty
@@ -74,7 +74,7 @@ Describe 'Get-KitConfig' {
     }
 
     It 'uses the local values and keeps the other keys empty' {
-        $kit = New-TestKitFolder -Name 'local' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
+        $kit = Write-TestKitFolder -Name 'local' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
         $config = Get-KitConfig -Root $kit
         $config.Source | Should -Be 'Local'
         $config.LocalPath | Should -Be (Join-Path $kit 'config.local.psd1')
@@ -85,47 +85,47 @@ Describe 'Get-KitConfig' {
     }
 
     It 'lets a non-empty override win over the local value' {
-        $kit = New-TestKitFolder -Name 'override' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
+        $kit = Write-TestKitFolder -Name 'override' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
         $config = Get-KitConfig -Root $kit -Override @{ ThirdParty = @{ CustomerId = $script:otherValue } }
         $config.ThirdParty.CustomerId | Should -Be $script:otherValue
     }
 
     It 'lets a non-empty override win over the defaults' {
-        $kit = New-TestKitFolder -Name 'override-defaults'
+        $kit = Write-TestKitFolder -Name 'override-defaults'
         $config = Get-KitConfig -Root $kit -Override @{ ThirdParty = @{ CustomerId = $script:otherValue } }
         $config.Source | Should -Be 'Defaults'
         $config.ThirdParty.CustomerId | Should -Be $script:otherValue
     }
 
     It 'does not let an empty override clear the local value' {
-        $kit = New-TestKitFolder -Name 'empty-override' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
+        $kit = Write-TestKitFolder -Name 'empty-override' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
         $config = Get-KitConfig -Root $kit -Override @{ ThirdParty = @{ CustomerId = '' } }
         $config.ThirdParty.CustomerId | Should -Be $script:localValue
     }
 
     It 'rejects a local key that is not in the example' {
-        $kit = New-TestKitFolder -Name 'bogus-key' -LocalText "@{ ThirdParty = @{ Bogus = 'x' } }"
+        $kit = Write-TestKitFolder -Name 'bogus-key' -LocalText "@{ ThirdParty = @{ Bogus = 'x' } }"
         { Get-KitConfig -Root $kit } | Should -Throw '*Unknown config key*ThirdParty.Bogus*'
     }
 
     It 'rejects a local section that is not in the example' {
-        $kit = New-TestKitFolder -Name 'bogus-section' -LocalText "@{ Other = @{ CustomerId = 'x' } }"
+        $kit = Write-TestKitFolder -Name 'bogus-section' -LocalText "@{ Other = @{ CustomerId = 'x' } }"
         { Get-KitConfig -Root $kit } | Should -Throw '*Unknown config key*Other*'
     }
 
     It 'rejects an override key that is not in the example' {
-        $kit = New-TestKitFolder -Name 'bogus-override'
+        $kit = Write-TestKitFolder -Name 'bogus-override'
         { Get-KitConfig -Root $kit -Override @{ ThirdParty = @{ Bogus = 'x' } } } | Should -Throw '*Unknown config key*ThirdParty.Bogus*'
     }
 
     It 'rejects a value that is not text' {
-        $kit = New-TestKitFolder -Name 'not-text' -LocalText '@{ ThirdParty = @{ CustomerId = 7 } }'
+        $kit = Write-TestKitFolder -Name 'not-text' -LocalText '@{ ThirdParty = @{ CustomerId = 7 } }'
         { Get-KitConfig -Root $kit } | Should -Throw '*ThirdParty.CustomerId*text*'
     }
 
     It 'rejects a local file that contains code and never runs it' {
         $marker = Join-Path $TestDrive 'ran.txt'
-        $kit = New-TestKitFolder -Name 'code' -LocalText "@{ ThirdParty = @{ CustomerId = (New-Item -Path '$marker' -ItemType File) } }"
+        $kit = Write-TestKitFolder -Name 'code' -LocalText "@{ ThirdParty = @{ CustomerId = (New-Item -Path '$marker' -ItemType File) } }"
         { Get-KitConfig -Root $kit } | Should -Throw '*config.local.psd1 is not a plain data file*'
         $marker | Should -Not -Exist
     }
@@ -137,7 +137,7 @@ Describe 'Get-KitConfig' {
     }
 
     It 'writes no config value to any output stream' {
-        $kit = New-TestKitFolder -Name 'streams' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
+        $kit = Write-TestKitFolder -Name 'streams' -LocalText "@{ ThirdParty = @{ CustomerId = '$script:localValue' } }"
         $captured = @(Get-KitConfig -Root $kit -Verbose -InformationAction Continue *>&1)
         $records = @($captured | Where-Object {
                 $_ -is [System.Management.Automation.WarningRecord] -or
