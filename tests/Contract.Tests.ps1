@@ -35,7 +35,8 @@ Describe 'Vendor <Name> contract' -ForEach $script:descriptors {
     }
 
     It 'has a valid descriptor' {
-        $problems = @($script:violations | Where-Object { -not $_.Operation } |
+        # Descriptor-level kinds: no operation to name (InvalidDescriptor, ModuleNotFound) or a key outside the contract.
+        $problems = @($script:violations | Where-Object { -not $_.Operation -or $_.Kind -eq 'UnknownOperation' } |
                 ForEach-Object { '{0} {1}' -f $_.Kind, $_.Detail })
         $problems | Should -BeNullOrEmpty
     }

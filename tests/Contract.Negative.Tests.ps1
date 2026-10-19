@@ -11,6 +11,8 @@ BeforeAll {
     $script:completeTarget = Join-Path $script:completeFolder 'Fixture.Target.psm1'
     $script:completeBuild = Join-Path $script:completeFolder 'Fixture.Build.psm1'
     $script:completeCommands = (Import-PowerShellDataFile -Path (Join-Path $script:completeFolder 'vendor.psd1')).Commands
+    $script:contractOrder = @((Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot '..\kit\core\VendorContract.psd1')).Operations |
+            ForEach-Object { $_.Name })
 
     # Write a descriptor built from text into a TestDrive folder and return its path. Module paths are rooted
     # and point at the complete fixture's modules unless a test passes its own.
@@ -129,7 +131,7 @@ Export-ModuleMember -Function *
         $second = @(Test-KitVendorContract -DescriptorPath $path)
         $first | Should -HaveCount 8
         @($first | ForEach-Object { $_.Kind } | Select-Object -Unique) | Should -Be @('MissingOperation')
-        @($first | ForEach-Object { $_.Operation }) | Should -Be $script:operationNames
+        @($first | ForEach-Object { $_.Operation }) | Should -Be $script:contractOrder
         @($second | ForEach-Object { '{0}|{1}|{2}' -f $_.Operation, $_.Kind, $_.Detail }) |
             Should -Be @($first | ForEach-Object { '{0}|{1}|{2}' -f $_.Operation, $_.Kind, $_.Detail })
     }

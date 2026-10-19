@@ -62,26 +62,29 @@ function Read-KitVendorDescriptor {
         throw "Vendor descriptor not found: $full"
     }
     $data = Import-PowerShellDataFile -LiteralPath $full
-    foreach ($key in 'Name', 'Manufacturer', 'TargetModule', 'Commands') {
-        if (-not $data.ContainsKey($key) -or $null -eq $data[$key] -or "$($data[$key])" -eq '') {
+    foreach ($key in 'Name', 'Manufacturer', 'TargetModule') {
+        if (-not $data.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$data[$key])) {
             throw "Vendor descriptor $full lacks the required key '$key'."
         }
     }
-    if ($data.Commands -isnot [hashtable]) {
+    # An empty Commands table is valid data: the contract check then reports every operation as missing.
+    if (-not $data.ContainsKey('Commands') -or $data.Commands -isnot [hashtable]) {
         throw "Vendor descriptor ${full}: Commands must be a hashtable of operation name to command name."
     }
     $folder = Split-Path -Path $full -Parent
     $buildModule = if ($data.ContainsKey('BuildModule')) { [string]$data.BuildModule } else { $null }
 
     [pscustomobject]@{
-        PSTypeName       = 'Kit.Vendor'
-        Name             = [string]$data.Name
-        Manufacturer     = [string]$data.Manufacturer
-        Folder           = $folder
-        DescriptorPath   = $full
-        TargetModulePath = Resolve-KitVendorModulePath -Folder $folder -Module ([string]$data.TargetModule)
-        BuildModulePath  = Resolve-KitVendorModulePath -Folder $folder -Module $buildModule
-        Commands         = $data.Commands
+        PSTypeName          = 'Kit.Vendor'
+        Name                = [string]$data.Name
+        Manufacturer        = [string]$data.Manufacturer
+        Folder              = $folder
+        DescriptorPath      = $full
+        TargetModulePath    = Resolve-KitVendorModulePath -Folder $folder -Module ([string]$data.TargetModule)
+        BuildModulePath     = Resolve-KitVendorModulePath -Folder $folder -Module $buildModule
+        TargetModuleSetting = [string]$data.TargetModule
+        BuildModuleSetting  = $buildModule
+        Commands            = $data.Commands
     }
 }
 
@@ -143,14 +146,33 @@ function Test-KitVendorContract {
         [ValidateSet('Build', 'Target')][string[]]$Plane = @('Build', 'Target')
     )
 
-    $vendor = Read-KitVendorDescriptor -Path $DescriptorPath
+    try {
+        $vendor = Read-KitVendorDescriptor -Path $DescriptorPath
+    }
+    catch {
+        ConvertTo-KitContractViolation -Vendor $DescriptorPath -Kind 'InvalidDescriptor' -Detail $_.Exception.Message
+        return
+    }
     $contract = Get-KitVendorContractTable
 
     $modules = @{}
     try {
-        foreach ($name in $Plane) {
+        # Planes load in a fixed order (Build, then Target) whatever order -Plane lists them in.
+        foreach ($name in 'Build', 'Target') {
+            if ($Plane -notcontains $name) { continue }
             $path = if ($name -eq 'Build') { $vendor.BuildModulePath } else { $vendor.TargetModulePath }
-            $modules[$name] = Import-Module -Name $path -Force -PassThru
+            $setting = if ($name -eq 'Build') { $vendor.BuildModuleSetting } else { $vendor.TargetModuleSetting }
+            if (-not $path) {
+                $declared = if ($setting) { $setting } else { 'not declared in the descriptor' }
+                ConvertTo-KitContractViolation -Vendor $vendor.Name -Kind 'ModuleNotFound' -Detail "$name module file not found: $declared"
+                continue
+            }
+            try {
+                $modules[$name] = Import-Module -Name $path -Force -PassThru -ErrorAction Stop
+            }
+            catch {
+                ConvertTo-KitContractViolation -Vendor $vendor.Name -Kind 'ModuleNotFound' -Detail "$name module $path failed to import: $($_.Exception.Message)"
+            }
         }
 
         foreach ($entry in $contract) {
@@ -160,8 +182,9 @@ function Test-KitVendorContract {
                     -Detail "Commands has no entry for '$($entry.Name)'."
                 continue
             }
-            $commandName = [string]$vendor.Commands[$entry.Name]
             $module = $modules[$entry.Plane]
+            if (-not $module) { continue }
+            $commandName = [string]$vendor.Commands[$entry.Name]
             if (-not $module.ExportedCommands.ContainsKey($commandName)) {
                 ConvertTo-KitContractViolation -Vendor $vendor.Name -Operation $entry.Name -Kind 'CommandNotFound' `
                     -Detail "$commandName is not exported by $($module.Path)"
@@ -173,6 +196,14 @@ function Test-KitVendorContract {
                     ConvertTo-KitContractViolation -Vendor $vendor.Name -Operation $entry.Name -Kind 'MissingParameter' `
                         -Detail $parameter
                 }
+            }
+        }
+
+        $known = @($contract | ForEach-Object { $_.Name })
+        foreach ($key in ($vendor.Commands.Keys | Sort-Object)) {
+            if ($known -notcontains $key) {
+                ConvertTo-KitContractViolation -Vendor $vendor.Name -Operation ([string]$key) -Kind 'UnknownOperation' `
+                    -Detail "Commands key '$key' is not an operation in the contract."
             }
         }
     }
