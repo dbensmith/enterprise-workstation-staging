@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Modular Foundation
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-10-19T00:46:11.357Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-10-19T01:06:00.397Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 1 execution started
-state_head: 06c846680c7d05e5ea91b2afd81f810edb3a0737
+state_head: d0963c9baa3e5380e3c9ab98006aa021a2c35abe
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 ## Current Position
 
 Phase: 1 (Modular Foundation) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-10-18 — Phase 1 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P01 | 20min | 3 tasks | 12 files |
 | Phase 1 P03 | 18min | 3 tasks | 9 files |
 | Phase 01 P04 | 25min | 3 tasks | 2 files |
+| Phase 01 P05 | 17min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-03] Vendor descriptors and contract table are data-only (Import-PowerShellDataFile); UnknownOperation counts as a descriptor-level contract failure
 - [Phase 01]: 01-04: Install-HPKitDriver calls ShouldProcess and still passes -WhatIf to Invoke-KitTool so a dry run prints the real command
 - [Phase 01]: 01-04: firmware items ordered non-BIOS then BIOS by partition, not Sort-Object (stable on 5.1)
+- [Phase 01]: 01-05: core Profile.ps1 names no vendor; FirmwareMinimum required keys are Version/Verified/Source, SoftPaq passes through the guard
+- [Phase 01]: 01-05: Get-KitConfig withholds config.local.psd1 parse-failure detail so no value is echoed (SEC-02)
 
 ### Pending Todos
 
@@ -99,6 +102,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T00:46:11.309Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-10-19T01:06:00.350Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None
