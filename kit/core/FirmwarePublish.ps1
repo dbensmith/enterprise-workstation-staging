@@ -192,6 +192,8 @@ function Get-KitStagePlan {
         [hashtable]$CapturePath
     )
     $cache = @{}
+    $stagedId = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($group in $StagedGroup) { $null = $stagedId.Add($group.Id) }
     $layoutGroup = @{}
     foreach ($group in $Layout.Groups) { $layoutGroup[$group.Id.ToLowerInvariant()] = $group }
 
@@ -209,9 +211,12 @@ function Get-KitStagePlan {
             $group = $layoutGroup[([string]$entry.Group).ToLowerInvariant()]
             if (-not $group) { throw "$label names the group '$($entry.Group)', which the layout does not have" }
             if ($group.SourceKind -ceq 'Captured') { throw "$label names the captured group '$($group.Id)'; a captured group is filled from the capture only" }
+            if (-not $stagedId.Contains($group.Id)) { continue }
 
             $problem = @(Get-KitStagePathProblem -RelativePath $path -Size ([long]$entry.Size))
             if ($problem.Count -gt 0) { throw "$label is not a valid stick path: $($problem -join '; ')" }
+            $leaf = $path.Substring($path.LastIndexOf('\') + 1)
+            if ($leaf -like '*Pswd*.bin' -or $leaf -eq 'password.bin') { throw "$label is a password file name; such a file must never be staged" }
 
             $folder = $group.Folder
             if ($folder.Contains('{Platform}')) {
@@ -252,9 +257,23 @@ function Get-KitStagePlan {
     }
 
     $destination = [System.Collections.Generic.List[object]]::new()
-    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $first = @{}
     foreach ($each in $pair) {
-        if ($seen.Add($each.Entry.RelativePath)) { $destination.Add($each.Entry) }
+        $key = $each.Entry.RelativePath.ToLowerInvariant()
+        if (-not $first.ContainsKey($key)) {
+            $first[$key] = $each
+            $destination.Add($each.Entry)
+            continue
+        }
+        $other = $first[$key]
+        $ownerA = if ($other.Owner) { $other.Owner } else { 'shared' }
+        $ownerB = if ($each.Owner) { $each.Owner } else { 'shared' }
+        if ($each.Entry.Sha256 -ne $other.Entry.Sha256) {
+            throw "Two models map to one path with different content: $($other.Entry.RelativePath) ($ownerA, $ownerB)"
+        }
+        if ($each.Entry.RelativePath -cne $other.Entry.RelativePath) {
+            throw "Two entries differ only in letter case: $($other.Entry.RelativePath) ($ownerA) and $($each.Entry.RelativePath) ($ownerB); FAT32 treats them as one file"
+        }
     }
     [pscustomobject]@{ Pair = $pair.ToArray(); Destination = $destination.ToArray() }
 }
@@ -319,6 +338,9 @@ function Get-KitStageManifest {
     .PARAMETER Plan
     The plan from Get-KitStagePlan.
 
+    .PARAMETER FlashModel
+    The model id of a -FlashModel run, or an empty string.
+
     .PARAMETER ToolVersion
     The Kit.Core module version.
 
@@ -339,6 +361,9 @@ function Get-KitStageManifest {
 
         [Parameter(Mandatory)]
         [pscustomobject]$Plan,
+
+        [AllowEmptyString()]
+        [string]$FlashModel = '',
 
         [Parameter(Mandatory)]
         [string]$ToolVersion
@@ -396,7 +421,7 @@ function Get-KitStageManifest {
         volumeLabel   = [string]$Layout.VolumeLabel
         fileSystem    = [string]$Layout.FileSystem
         verified      = ($unverified.Count -eq 0)
-        flashModel    = ''
+        flashModel    = $FlashModel
         groups        = $group
         models        = $models
         shared        = $shared
@@ -431,6 +456,19 @@ function Publish-FirmwareStage {
     .PARAMETER CapturePath
     Table of capture name to the folder that holds the captured tree.
 
+    .PARAMETER FlashModel
+    A model id. Stages only that model and also the groups that are not staged by default (the escape hatch for flashing
+    one model from a folder the normal build leaves out). An id that is not among the models throws and lists them.
+
+    .PARAMETER IncludeKit
+    Also copy the kit files Get-KitPublishFile lists into <target>\kit. Off by default.
+
+    .PARAMETER KitRoot
+    The kit folder to copy with -IncludeKit. Defaults to the kit this module belongs to.
+
+    .PARAMETER RemoveStale
+    Delete files inside closed group folders that the new manifest does not list. Without it such a file is a Fail.
+
     .PARAMETER AllowFolder
     Stage into a plain folder: the FAT32 and label checks are skipped (one Warn) and the folder is created.
 
@@ -459,6 +497,14 @@ function Publish-FirmwareStage {
 
         [hashtable]$CapturePath = @{},
 
+        [string]$FlashModel,
+
+        [switch]$IncludeKit,
+
+        [string]$KitRoot = (Get-KitRoot),
+
+        [switch]$RemoveStale,
+
         [switch]$AllowFolder,
 
         [switch]$PassThru
@@ -475,7 +521,16 @@ function Publish-FirmwareStage {
     $target = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($TargetPath)
 
     $staged = @($Layout.Groups | Where-Object { $_.Default })
+    $flashId = ''
+    if ($FlashModel) {
+        $match = @($models | Where-Object { $_.ModelId -eq $FlashModel })
+        if ($match.Count -eq 0) { throw "FlashModel '$FlashModel' is not one of: $(($models | ForEach-Object { $_.ModelId }) -join ', ')" }
+        $models = $match
+        $flashId = [string]$match[0].ModelId
+        $staged = @($Layout.Groups)
+    }
     if ($staged.Count -eq 0) { throw 'The layout has no default group to stage' }
+    if ($IncludeKit -and -not (Test-Path -LiteralPath $KitRoot -PathType Container)) { throw "KitRoot $KitRoot not found" }
     $plan = Get-KitStagePlan -Layout $Layout -Model $models -StagedGroup $staged -CapturePath $CapturePath
 
     $targetFinding = @(Test-FirmwareTarget -Path $target -AllowFolder:$AllowFolder | Where-Object { $_.Status -eq 'Fail' })
@@ -511,7 +566,30 @@ function Publish-FirmwareStage {
             $own.Add((ConvertTo-KitFirmwareFinding -Status Warn -Check Volume -Message "could not set the volume label to $($Layout.VolumeLabel)"))
         }
 
-        $manifest = Get-KitStageManifest -Layout $Layout -Model $models -StagedGroup $staged -Plan $plan -ToolVersion $MyInvocation.MyCommand.Module.Version.ToString()
+        if ($IncludeKit) {
+            foreach ($file in Get-KitPublishFile -Root $KitRoot) {
+                $destination = Join-Path -Path $target -ChildPath (Join-Path -Path 'kit' -ChildPath $file.RelativePath)
+                $null = New-Item -Path (Split-Path -Path $destination -Parent) -ItemType Directory -Force
+                Copy-Item -LiteralPath $file.FullName -Destination $destination -Force -ErrorAction Stop
+            }
+        }
+
+        $manifest = Get-KitStageManifest -Layout $Layout -Model $models -StagedGroup $staged -Plan $plan -FlashModel $flashId -ToolVersion $MyInvocation.MyCommand.Module.Version.ToString()
+        if ($RemoveStale) {
+            $listed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($file in $plan.Destination) { $null = $listed.Add($file.RelativePath) }
+            $prefix = $target.TrimEnd('\') + '\'
+            foreach ($folder in Get-KitClosedFolder -Manifest $manifest) {
+                $full = Join-Path -Path $target -ChildPath $folder
+                if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
+                foreach ($stale in @(Get-ChildItem -LiteralPath $full -Recurse -File -Force)) {
+                    $relative = $stale.FullName.Substring($prefix.Length)
+                    if ($listed.Contains($relative)) { continue }
+                    Remove-Item -LiteralPath $stale.FullName -Force
+                    $own.Add((ConvertTo-KitFirmwareFinding -Status Warn -Check Folders -Message 'removed a file the manifest does not list' -Path $relative))
+                }
+            }
+        }
         $json = ConvertTo-Json -InputObject $manifest -Depth 6
         [System.IO.File]::WriteAllText($manifestPath, $json, [System.Text.UTF8Encoding]::new($false))
         $written = $true
