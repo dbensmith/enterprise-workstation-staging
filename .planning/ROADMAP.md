@@ -69,7 +69,22 @@ Plans:
   4. The F2 menu on a G5 or G6 loads the latest UEFI diagnostics from the stick rather than the older built-in version
   5. The Tools stick carries a firmware manifest (model, platform ID, latest BIOS version, hash) and HP's Windows flash tool as a fallback
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md - Core layout loader and stick validator (Test-FirmwareStage: hashes, FAT32 rules, closed folders, READY, phone-width output)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-02-PLAN.md - GetFirmwareStickLayout contract operation, fixture vendor, HP layout data and BIOS image resolver
+- [ ] 02-03-PLAN.md - Publish-FirmwareStage (manifest, READY, merge and collision rule, -FlashModel) and diagnostics capture and replay
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-04-PLAN.md - HP Windows flash fallback, CVA metadata, download reuse, HPCMSL pre-flight, and the shipped-layout end-to-end proof through Publish-FirmwareStage and Test-FirmwareStage
+- [ ] 02-05-PLAN.md - builder/Build-ToolsStick.ps1 master script with child-process exit-code tests
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-06-PLAN.md - Bench checklist and README (FW-06 hardware step as a checkpoint recorded as pending; the phase ends human_needed by design)
 
 ### Phase 3: Read-Only Assess
 
@@ -144,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Modular Foundation | 8/8 | In Progress | - |
-| 2. Tools Stick Firmware Staging | 0/TBD | Not started | - |
+| 2. Tools Stick Firmware Staging | 0/6 | Not started | - |
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
 | 5. Deploy and First Logon | 0/TBD | Not started | - |

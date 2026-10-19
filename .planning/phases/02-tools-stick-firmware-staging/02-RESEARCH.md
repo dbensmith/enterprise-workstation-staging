@@ -501,7 +501,7 @@ It 'fails and names the file when a BIOS image sits in the wrong folder' {
 | A12 | Newest diagnostics SoftPaq is `sp171653`; a later one could exist | State of the Art | Stale version staged; refresh procedure documented |
 | A13 | The 10.8.5.0 installer writes the same `\EFI\HP\SystemDiags\` / `\EFI\HP\BIOSUpdate\` folders as 10.8.4.0 (only 10.8.4.0's `Installer.exe` was string-scanned) | Layout Evidence | Snapshot paths come from the real capture of the version actually staged, so the capture step corrects it |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which staging groups does the bench prove?**
    - Known: candidate paths and their sources (above). Unknown: the actual per-menu behaviour on G5 and G6.
