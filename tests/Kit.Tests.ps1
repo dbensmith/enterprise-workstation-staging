@@ -143,13 +143,24 @@ Describe 'Installer transcript and exit codes' {
         $run.ExitCode | Should -Be 0
         $run.Output | Should -Match 'dism\.exe'
     }
-    It 'writes the transcript start and stop inside try/finally with WhatIf off' {
+    It 'starts the transcript with WhatIf off and stops it in a finally block' {
+        # Stop-Transcript has no -WhatIf parameter (only Start-Transcript honours it), so only the start needs the override.
         $text = Get-Content -LiteralPath $script:installer -Raw
         $text | Should -Match ([regex]::Escape('Start-Transcript -Path $LogPath -Append -WhatIf:$false'))
         $ast = Read-ScriptAst -Path $script:installer
-        $try = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TryStatementAst] }, $false))
-        $try.Count | Should -Be 1
-        $try[0].Finally.Extent.Text | Should -Match ([regex]::Escape('Stop-Transcript -WhatIf:$false'))
+        $guarded = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Finally -and
+                    $node.Finally.Extent.Text -match 'Stop-Transcript'
+                }, $false))
+        $guarded.Count | Should -Be 1
+        # Every exit sits inside that guarded try, so the transcript closes on exit 1 as well.
+        $exits = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ExitStatementAst] }, $false))
+        $exits.Count | Should -BeGreaterThan 0
+        foreach ($exit in $exits) {
+            $exit.Extent.StartOffset | Should -BeGreaterThan $guarded[0].Extent.StartOffset
+            $exit.Extent.EndOffset | Should -BeLessThan $guarded[0].Extent.EndOffset
+        }
     }
 }
 

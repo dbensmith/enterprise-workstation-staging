@@ -60,16 +60,47 @@ if ($Mode -eq 'Audit') {
     & (Join-Path $PSScriptRoot 'Test-DeviceBaseline.ps1') @auditArgs
     exit 0
 }
+else {
+    if (-not $PackagePath) {
+        throw '-PackagePath is required for -Mode Install.'
+    }
 
-if (-not $PackagePath) {
-    throw '-PackagePath is required for -Mode Install.'
+    # Presence only, from fixed text: a config value never reaches the console or a transcript.
+    $config = Get-KitConfig
+    $thirdPartyValues = @(if ($config.ThirdParty) { $config.ThirdParty.Values | Where-Object { $_ } })
+    if ($thirdPartyValues.Count -gt 0) {
+        Write-Information 'Third-party settings: found in config.local.psd1'
+    }
+    else {
+        Write-Warning 'Third-party settings: not configured; copy config.example.psd1 to config.local.psd1 beside Run.cmd (the third-party install step is skipped until then)'
+    }
+
+    # Installing needs admin. Ask once through UAC, and only for a real run: -WhatIf changes nothing.
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin -and -not $WhatIfPreference) {
+        $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+        foreach ($name in $PSBoundParameters.Keys) {
+            $value = $PSBoundParameters[$name]
+            if ($value -is [System.Management.Automation.SwitchParameter]) {
+                if ($value.IsPresent) { $relaunchArgs += "-$name" }
+            }
+            else {
+                $relaunchArgs += "-$name"
+                $relaunchArgs += [string]$value
+            }
+        }
+        $relaunchLine = ConvertTo-KitCommandLine -ArgumentList $relaunchArgs
+        Write-Information 'Installing needs administrator rights; approve the Windows prompt.'
+        $elevated = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $relaunchLine -Wait -PassThru
+        exit $elevated.ExitCode
+    }
+
+    $installArgs = @{ PackagePath = $PackagePath; WhatIf = [bool]$WhatIfPreference }
+    if ($Vendor) { $installArgs.Vendor = $Vendor }
+    if ($LogPath) { $installArgs.LogPath = $LogPath }
+    if ($SkipFirmware) { $installArgs.SkipFirmware = $true }
+    if ($Force) { $installArgs.Force = $true }
+
+    & (Join-Path $PSScriptRoot 'Install-DriverBaseline.ps1') @installArgs
+    exit $LASTEXITCODE
 }
-
-$installArgs = @{ PackagePath = $PackagePath; WhatIf = [bool]$WhatIfPreference }
-if ($Vendor) { $installArgs.Vendor = $Vendor }
-if ($LogPath) { $installArgs.LogPath = $LogPath }
-if ($SkipFirmware) { $installArgs.SkipFirmware = $true }
-if ($Force) { $installArgs.Force = $true }
-
-& (Join-Path $PSScriptRoot 'Install-DriverBaseline.ps1') @installArgs
-exit $LASTEXITCODE

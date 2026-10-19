@@ -66,85 +66,100 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$InformationPreference = 'Continue'
-Write-Verbose "Transcript path: $LogPath"
 
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin -and -not $WhatIfPreference) {
-    throw 'Run from an elevated session (Run.cmd elevates for you), or add -WhatIf.'
+function Show-InstallMessage {
+    # Progress text. Windows PowerShell 5.1 leaves the information stream out of a transcript, so this writes to
+    # the host, which the transcript keeps; first-boot logs then show what the run did.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)][string]$Message
+    )
+    Write-Host $Message
 }
 
-Import-Module (Join-Path $PSScriptRoot 'core\Kit.Core.psd1') -Force
+# Start-Transcript honours -WhatIf, so a rehearsal would otherwise leave no log.
+if ($LogPath) { $null = Start-Transcript -Path $LogPath -Append -WhatIf:$false }
+try {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin -and -not $WhatIfPreference) {
+        throw 'Run from an elevated session (Run.cmd elevates for you), or add -WhatIf.'
+    }
 
-$packageRoot = (Resolve-Path -LiteralPath $PackagePath).ProviderPath
-$manifest = Get-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Raw | ConvertFrom-Json
-$script:failures = 0
+    Import-Module (Join-Path $PSScriptRoot 'core\Kit.Core.psd1') -Force
 
-$kitVendor = if ($Vendor) {
-    Get-KitVendor -Name $Vendor
-}
-elseif ($manifest.Vendor) {
-    Get-KitVendor -Name $manifest.Vendor
-}
-else {
-    Get-KitVendor -Manufacturer (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-}
+    $packageRoot = (Resolve-Path -LiteralPath $PackagePath).ProviderPath
+    $manifest = Get-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Raw | ConvertFrom-Json
+    $script:failures = 0
 
-Write-Information "Baseline: $($manifest.Profile) [$($manifest.Platform)] $($manifest.Os) $($manifest.OsVer), built $($manifest.BuiltUtc) (vendor $($kitVendor.Name))"
+    $kitVendor = if ($Vendor) {
+        Get-KitVendor -Name $Vendor
+    }
+    elseif ($manifest.Vendor) {
+        Get-KitVendor -Name $manifest.Vendor
+    }
+    else {
+        Get-KitVendor -Manufacturer (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
+    }
 
-# Preference variables do not reach module functions, so -WhatIf travels in the parameter table.
-$stepParameters = @{ PackagePath = $packageRoot; WhatIf = [bool]$WhatIfPreference }
+    Show-InstallMessage "Baseline: $($manifest.Profile) [$($manifest.Platform)] $($manifest.Os) $($manifest.OsVer), built $($manifest.BuiltUtc) (vendor $($kitVendor.Name))"
 
-if ($OfflineImagePath) {
-    $stepParameters.OfflineImagePath = $OfflineImagePath
+    # Preference variables do not reach module functions, so -WhatIf travels in the parameter table.
+    $stepParameters = @{ PackagePath = $packageRoot; WhatIf = [bool]$WhatIfPreference }
+
+    if ($OfflineImagePath) {
+        $stepParameters.OfflineImagePath = $OfflineImagePath
+        try {
+            $null = Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters
+        }
+        catch {
+            Write-Error $_.Exception.Message -ErrorAction Continue
+            $script:failures++
+        }
+        exit [int]($script:failures -gt 0)
+    }
+
+    Set-Service winmgmt -StartupType Automatic
+    $svc = Get-Service winmgmt -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Running') {
+        Start-Service winmgmt
+    }
+
+    $identity = Invoke-KitVendorCommand -Vendor $kitVendor -Operation GetDeviceIdentity
+    if ($identity.PlatformId -ne $manifest.Platform -and -not $Force) {
+        throw "This board is platform '$($identity.PlatformId)'; package targets '$($manifest.Platform)'. Use -Force to override."
+    }
+
     try {
-        $null = Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters
+        foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters)) {
+            if ($row.Result -eq 'FAILURE') {
+                Write-Error "FAIL $($row.Name): $($row.Detail)" -ErrorAction Continue
+                $script:failures++
+            }
+            else {
+                Show-InstallMessage "$($row.Result) $($row.Name): $($row.Detail)"
+            }
+        }
     }
     catch {
         Write-Error $_.Exception.Message -ErrorAction Continue
         $script:failures++
     }
+
+    if (-not $SkipFirmware) {
+        foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallFirmware -Parameters $stepParameters)) {
+            if ($row.Result -eq 'FAILURE') {
+                Write-Error "FAIL $($row.Id) $($row.Name): $($row.Detail)" -ErrorAction Continue
+                $script:failures++
+            }
+            else {
+                Show-InstallMessage "$($row.Result) $($row.Id) $($row.Name): $($row.Detail)"
+            }
+        }
+    }
+
+    Show-InstallMessage "Done with $script:failures failure(s). Reboot to finish driver and firmware installation."
     exit [int]($script:failures -gt 0)
 }
-
-Set-Service winmgmt -StartupType Automatic
-$svc = Get-Service winmgmt -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -ne 'Running') {
-    Start-Service winmgmt
+finally {
+    if ($LogPath) { $null = Stop-Transcript }
 }
-
-$identity = Invoke-KitVendorCommand -Vendor $kitVendor -Operation GetDeviceIdentity
-if ($identity.PlatformId -ne $manifest.Platform -and -not $Force) {
-    throw "This board is platform '$($identity.PlatformId)'; package targets '$($manifest.Platform)'. Use -Force to override."
-}
-
-try {
-    foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallDrivers -Parameters $stepParameters)) {
-        if ($row.Result -eq 'FAILURE') {
-            Write-Error "FAIL $($row.Name): $($row.Detail)" -ErrorAction Continue
-            $script:failures++
-        }
-        else {
-            Write-Information "$($row.Result) $($row.Name): $($row.Detail)"
-        }
-    }
-}
-catch {
-    Write-Error $_.Exception.Message -ErrorAction Continue
-    $script:failures++
-}
-
-if (-not $SkipFirmware) {
-    foreach ($row in @(Invoke-KitVendorCommand -Vendor $kitVendor -Operation InstallFirmware -Parameters $stepParameters)) {
-        if ($row.Result -eq 'FAILURE') {
-            Write-Error "FAIL $($row.Id) $($row.Name): $($row.Detail)" -ErrorAction Continue
-            $script:failures++
-        }
-        elseif ($row.Result -eq 'SKIPPED') {
-            Write-Information "SKIP $($row.Id) $($row.Name): $($row.Detail)"
-        }
-    }
-}
-
-Write-Information "Done with $script:failures failure(s). Reboot to finish driver and firmware installation."
-exit [int]($script:failures -gt 0)
