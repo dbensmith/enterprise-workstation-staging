@@ -228,7 +228,7 @@ Describe 'Get-KitPublishFile' {
         $names = @($script:listed.RelativePath)
         $names | Should -Not -Contain 'config.local.psd1'
         $names | Should -Not -Contain 'vendors\x\site.local.psd1'
-        @($names | Where-Object { $_ -match '(^|\)results(\|$)' }) | Should -BeNullOrEmpty
+        @($names | Where-Object { $_ -match '(^|\\)results(\\|$)' }) | Should -BeNullOrEmpty
     }
     It 'defaults to the real kit folder and lists its launcher, installer and core manifest' {
         $names = @($script:realList.RelativePath)
@@ -237,7 +237,7 @@ Describe 'Get-KitPublishFile' {
         $names | Should -Contain 'core\Kit.Core.psd1'
     }
     It 'lists no local settings file and no results path from the real kit folder' {
-        @($script:realList.RelativePath | Where-Object { $_ -match '\.local\.psd1$' -or $_ -match '(^|\)results(\|$)' }) | Should -BeNullOrEmpty
+        @($script:realList.RelativePath | Where-Object { $_ -match '\.local\.psd1$' -or $_ -match '(^|\\)results(\\|$)' }) | Should -BeNullOrEmpty
     }
 }
 
