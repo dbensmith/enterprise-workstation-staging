@@ -2,48 +2,70 @@
 
 <#
 .SYNOPSIS
-Build a repeatable HP driver + firmware baseline package from the HP SoftPaq catalog.
+Build a repeatable driver + firmware baseline package for one vendor's model.
 
 .DESCRIPTION
-One catalog query per stage, filtered by a per-model profile (profiles\*.psd1):
-  Drivers  - DPB-eligible 'Driver - *' SoftPaqs, extracted to INF folders (New-HPBuildDriverPack).
-  Firmware - 'BIOS' and 'Firmware' SoftPaqs, downloaded, signature-checked, extracted, with
-             their CVA silent-install command and return codes recorded in manifest.json.
-The package also gets Install-HPDriverBaseline.ps1, which applies it online (pnputil + firmware)
-or offline (DISM /Add-Driver into a mounted image). Re-running refreshes the package in place.
+Vendor-neutral build entry. The vendor is a parameter: this script resolves the vendor descriptor and the
+model profile, then runs the build through the vendor interface, one operation per stage:
+  Drivers  - NewCustomPack: the vendor builds its custom driver pack from its catalog.
+  Firmware - GetFirmware: the vendor downloads and extracts its BIOS and firmware packages.
+The package lands in <OutputRoot>\<vendor>\<model>\<os>-<release> and holds Drivers\, Firmware\ and
+manifest.json only. No installer or other script is copied into it: packages are data (D-04).
+Re-running refreshes the package in place; a single -Stage keeps the other stage's manifest entries.
+
+.PARAMETER Vendor
+Vendor name from its descriptor (vendor.psd1), for example the folder name under kit\vendors.
+
+.PARAMETER Model
+Model id: the profile file name under kit\profiles\<vendor>, without its extension.
 
 .PARAMETER ProfilePath
-Per-model profile (.psd1) with Name, Platform, Os, OsVer, DriverExclude, FirmwareExclude.
+Load the model profile from this file instead of by -Model.
+
+.PARAMETER VendorRoot
+Folders searched for vendor descriptors. Defaults to the vendors folder of the kit.
 
 .PARAMETER OutputRoot
-Parent folder for packages; each lands in <OutputRoot>\<Platform>-<os>-<release>.
+Parent folder for packages. Defaults to the staging folder next to the repo.
 
 .PARAMETER OsVer
-Overrides the profile's OsVer. Must be a release HP indexes for the platform.
+Overrides the profile's OsVer. Must be a release the vendor's catalog indexes for the platform.
 
 .PARAMETER Stage
 Drivers, Firmware, or both (default). A partial run keeps the other stage's manifest entries.
 
 .EXAMPLE
-.\Build-HPDriverBaseline.ps1
-Build the EliteBook 840 G6 baseline against HP's newest indexed Windows 11 release.
+builder\Build-DriverBaseline.ps1 -Vendor HP -Model 840-g6 -WhatIf
+Show what the 840 G6 build would select and download, without building anything.
 
 .EXAMPLE
-.\Build-HPDriverBaseline.ps1 -OsVer 24H2 -Stage Firmware -WhatIf
-Show what the firmware stage would download for a pinned 24H2 catalog.
+builder\Build-DriverBaseline.ps1 -Vendor HP -Model 840-g5 -Stage Firmware
+Stage only the 840 G5 firmware and keep its driver entries from the previous manifest.
 
 .OUTPUTS
 None. Writes the package folder and an Included/Excluded summary to the information stream.
 
 .NOTES
-Requires admin (except with -WhatIf) and HPCMSL, which is installed from the PowerShell Gallery if missing.
+Elevation and tool requirements (catalog module, administrator rights) belong to the vendor module and are
+checked there; -WhatIf previews without them where the vendor allows it.
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByModel')]
 param(
-    [ValidateScript({ Test-Path $_ -PathType Leaf })]
-    [string]$ProfilePath = (Join-Path $PSScriptRoot '..\kit\profiles\hp\840-g6.psd1'),
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
+    [string]$Vendor,
 
-    [string]$OutputRoot = 'C:\HP_Staging',
+    [Parameter(Mandatory, ParameterSetName = 'ByModel')]
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
+    [string]$Model,
+
+    [Parameter(Mandatory, ParameterSetName = 'ByPath')]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+    [string]$ProfilePath,
+
+    [string[]]$VendorRoot,
+
+    [string]$OutputRoot = (Join-Path $PSScriptRoot '..\staging'),
 
     [string]$OsVer,
 
@@ -53,126 +75,92 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $InformationPreference = 'Continue'
-Import-Module (Join-Path $PSScriptRoot 'HPDriverBaseline.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\kit\core\Kit.Core.psd1') -Force
 
-function Initialize-HPCMSL {
-    if (Get-Module -ListAvailable -Name HPCMSL) {
-        Import-Module HPCMSL
-        return
-    }
+$vendorArguments = @{ Name = $Vendor }
+if ($VendorRoot) { $vendorArguments.VendorRoot = $VendorRoot }
+$vendorInfo = Get-KitVendor @vendorArguments
 
-    Write-Information 'Installing HPCMSL from the PowerShell Gallery...'
-    if ($PSVersionTable.PSEdition -eq 'Desktop') {
-        # Windows PowerShell 5.1 defaults to TLS 1.0/1.1, which the Gallery rejects.
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-    }
-    $install = @{ Name = 'HPCMSL'; Scope = 'AllUsers'; Force = $true }
-    # -AcceptLicense only exists in PowerShellGet 2.x+; inbox 1.0.0.1 on 5.1 lacks it.
-    if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) { $install.AcceptLicense = $true }
-    Install-Module @install
-    Import-Module HPCMSL
+$modelProfile = if ($PSCmdlet.ParameterSetName -eq 'ByPath') {
+    Get-KitProfile -Path $ProfilePath
+}
+else {
+    Get-KitProfile -Vendor $vendorInfo.Name -ModelId $Model
+}
+if ($modelProfile.Vendor -ine $vendorInfo.Name) {
+    throw "Profile $($modelProfile.ProfilePath) belongs to vendor '$($modelProfile.Vendor)', not '$($vendorInfo.Name)'."
+}
+# An unverified platform id (say, one taken from a forum post) is built against only with a warning.
+$platform = Get-KitVerifiedValue -ModelProfile $modelProfile -Name Platform -AllowUnverified
+
+# Preference variables do not reach functions in another module, so -WhatIf is passed explicitly.
+$buildParameters = @{
+    ModelProfile = $modelProfile
+    OsVer        = $OsVer
+    OutputPath   = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputRoot)
+    WhatIf       = [bool]$WhatIfPreference
 }
 
-function Reset-Directory {
-    # Empty a stage's output so SoftPaqs superseded since the last build don't linger.
-    [CmdletBinding(SupportsShouldProcess)]
-    param([string]$Path)
-    if (-not $PSCmdlet.ShouldProcess($Path, 'Recreate empty directory')) { return }
-    if (Test-Path $Path) { Remove-Item -Path $Path -Recurse -Force }
-    $null = New-Item -Path $Path -ItemType Directory -Force
+$pack = $null
+$firmware = $null
+if ('Drivers' -in $Stage) {
+    $pack = Invoke-KitVendorCommand -Vendor $vendorInfo -Operation NewCustomPack -Parameters $buildParameters
+    if (-not $pack) { throw "Vendor '$($vendorInfo.Name)' returned no result for NewCustomPack." }
+    # Build the second stage against the release the first one resolved.
+    $buildParameters.OsVer = $pack.OsVer
+}
+if ('Firmware' -in $Stage) {
+    $firmware = Invoke-KitVendorCommand -Vendor $vendorInfo -Operation GetFirmware -Parameters $buildParameters
+    if (-not $firmware) { throw "Vendor '$($vendorInfo.Name)' returned no result for GetFirmware." }
 }
 
-function Select-SoftpaqSummary {
-    process { [pscustomobject]@{ Id = $_.id; Name = $_.Name; Version = $_.Version; Category = $_.Category; ReleaseDate = $_.ReleaseDate } }
+$results = @($pack, $firmware) | Where-Object { $_ }
+$packageDir = $results[0].PackagePath
+if (@($results.PackagePath | Select-Object -Unique).Count -ne 1) {
+    throw "The vendor's stages disagree on the package folder: $(($results.PackagePath) -join ' vs ')."
 }
-
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-# New-HPBuildDriverPack and SoftPaq self-extraction both require elevation. -WhatIf only reads the catalog.
-if (-not $isAdmin -and -not $WhatIfPreference) {
-    throw 'Run from an elevated PowerShell session (or add -WhatIf to preview the selection).'
-}
-
-$baseline = Import-PowerShellDataFile -Path $ProfilePath
-Initialize-HPCMSL
-
-$requestedOsVer = if ($OsVer) { $OsVer } else { $baseline.OsVer }
-$osRelease = Select-OsRelease -OsList (Get-HPDeviceDetails -Platform $baseline.Platform -OSList) -Os $baseline.Os -OsVer $requestedOsVer
-Write-Information "$($baseline.Name) [$($baseline.Platform)]: building against HP catalog $($baseline.Os) $osRelease"
-
-$packageDir = Join-Path $OutputRoot ('{0}-{1}-{2}' -f $baseline.Platform, $baseline.Os, $osRelease)
 $manifestPath = Join-Path $packageDir 'manifest.json'
-$query = @{ Platform = $baseline.Platform; Os = $baseline.Os; OsVer = $osRelease; Quiet = $true }
 
 # Carry forward sections for stages not run this time, so a partial rebuild keeps a complete manifest.
-$previous = if (Test-Path $manifestPath) { Get-Content $manifestPath -Raw | ConvertFrom-Json }
+$previous = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
+$toolVersions = [ordered]@{}
+if ($previous.ToolVersions) {
+    foreach ($property in $previous.ToolVersions.PSObject.Properties) { $toolVersions[$property.Name] = $property.Value }
+}
+foreach ($result in $results) {
+    foreach ($name in $result.ToolVersions.Keys) { $toolVersions[$name] = $result.ToolVersions[$name] }
+}
+
 $manifest = [ordered]@{
-    Profile   = $baseline.Name
-    Platform  = $baseline.Platform
-    Os        = $baseline.Os
-    OsVer     = $osRelease
-    BuiltUtc  = (Get-Date).ToUniversalTime().ToString('o')
-    HPCMSL    = (Get-Module HPCMSL).Version.ToString()
-    Drivers   = @($previous.Drivers | Where-Object { $_ })
-    Firmware  = @($previous.Firmware | Where-Object { $_ })
-    Excluded  = @($previous.Excluded | Where-Object { $_ -and $_.Stage -notin $Stage })
+    SchemaVersion = 2
+    Profile       = $modelProfile.Name
+    Vendor        = $vendorInfo.Name
+    ModelId       = $modelProfile.ModelId
+    Platform      = $platform
+    Os            = $modelProfile.Os
+    OsVer         = $results[0].OsVer
+    BuiltUtc      = (Get-Date).ToUniversalTime().ToString('o')
+    ToolVersions  = $toolVersions
+    Drivers       = @($previous.Drivers | Where-Object { $_ })
+    Firmware      = @($previous.Firmware | Where-Object { $_ })
+    Excluded      = @($previous.Excluded | Where-Object { $_ -and $_.Stage -notin $Stage })
+}
+if ($pack) {
+    $manifest.Drivers = @($pack.Drivers)
+    $manifest.Excluded += @($pack.Excluded)
+}
+if ($firmware) {
+    $manifest.Firmware = @($firmware.Firmware)
+    $manifest.Excluded += @($firmware.Excluded)
 }
 
-if ('Drivers' -in $Stage) {
-    $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category Driver) -Exclude $baseline.DriverExclude -RequireDriverPack
-    if (-not $selection.Included) { throw 'Driver selection is empty; check the profile excludes and catalog.' }
-    $manifest.Drivers = @($selection.Included | Select-SoftpaqSummary)
-    $manifest.Excluded += @($selection.Excluded | Select-Object *, @{ n = 'Stage'; e = { 'Drivers' } })
-
-    $driverDir = Join-Path $packageDir 'Drivers'
-    Reset-Directory $driverDir
-    if ($PSCmdlet.ShouldProcess($driverDir, "Build driver pack from $($selection.Included.Count) SoftPaqs")) {
-        # The pack lands in <Path>\<Name>, so build into the package root to get <package>\Drivers.
-        # HPCMSL's own "JSON is truncated" warning here is harmless: it's its internal Drivers\manifest.json.
-        $null = $selection.Included | New-HPBuildDriverPack -Path $packageDir -Name 'Drivers' -Format NoCompressedFile -Os $baseline.Os -OSVer $osRelease -Overwrite
-    }
-}
-
-if ('Firmware' -in $Stage) {
-    $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category BIOS, Firmware) -Exclude $baseline.FirmwareExclude
-    $manifest.Excluded += @($selection.Excluded | Select-Object *, @{ n = 'Stage'; e = { 'Firmware' } })
-
-    $firmwareDir = Join-Path $packageDir 'Firmware'
-    Reset-Directory $firmwareDir
-
-    $manifest.Firmware = @(foreach ($sp in $selection.Included) {
-            $number = $sp.id -replace '^sp', ''
-            $extractDir = Join-Path $firmwareDir $sp.id
-            if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
-                # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
-                Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
-            }
-
-            $meta = Get-HPSoftpaqMetadata -Number $number
-            $silent = $meta.'Install Execution'.SilentInstall
-            $entry = $sp | Select-SoftpaqSummary
-            $entry | Add-Member -NotePropertyMembers ([ordered]@{
-                    Path           = "Firmware/$($sp.id)"
-                    # Only HP's SSM-flagged (silent-supported) SoftPaqs are auto-applied; others are staged for a technician.
-                    AutoInstall    = [bool]($sp.SSM -and $silent)
-                    SilentInstall  = $(if ($silent) { Split-SoftpaqCommand $silent })  # $() so Windows PowerShell 5.1 parses it
-                    RebootRequired = $meta.General.SystemMustBeRebooted -eq '1'
-                    # CVA [Devices] hardware IDs (e.g. a specific SSD model); the installer skips the item when none is present.
-                    Devices        = @($meta.Devices.Keys | Where-Object { $_ -ne '_body' })
-                    ReturnCodes    = ConvertTo-ReturnCodeMap $meta.ReturnCode
-                })
-            $entry
-        })
-}
-
-if ($PSCmdlet.ShouldProcess($packageDir, 'Write manifest.json and Install-HPDriverBaseline.ps1')) {
+if ($PSCmdlet.ShouldProcess($packageDir, 'Write manifest.json')) {
     $null = New-Item -Path $packageDir -ItemType Directory -Force
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding UTF8
-    Copy-Item -Path (Join-Path $PSScriptRoot 'Install-HPDriverBaseline.ps1') -Destination $packageDir -Force
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
 Write-Information "`nIncluded:"
-@($manifest.Drivers) + @($manifest.Firmware) | Format-Table Id, Category, Version, Name -AutoSize | Out-String | Write-Information
+Write-Information "$(@($manifest.Drivers) + @($manifest.Firmware) | Format-Table Id, Category, Version, Name -AutoSize | Out-String)"
 Write-Information 'Excluded:'
-$manifest.Excluded | Format-Table Stage, Id, Name, Reason -AutoSize | Out-String | Write-Information
+Write-Information "$($manifest.Excluded | Format-Table Stage, Id, Name, Reason -AutoSize | Out-String)"
 Write-Information "Package: $packageDir"

@@ -10,10 +10,10 @@ BeforeAll {
         param(
             [Parameter(Mandatory)][string]$OutputRoot,
             [string[]]$Stage = @('Drivers', 'Firmware'),
-            [switch]$WhatIf
+            [switch]$Preview
         )
         & $script:buildScript -Vendor Fixture -VendorRoot $script:vendorRoot -ProfilePath $script:profilePath `
-            -OutputRoot $OutputRoot -Stage $Stage -WhatIf:$WhatIf 6>$null
+            -OutputRoot $OutputRoot -Stage $Stage -WhatIf:$Preview 6>$null
     }
 
     function Read-BuildScriptAst {
@@ -67,7 +67,7 @@ Describe 'Build-DriverBaseline through the vendor interface' {
     }
 
     It 'writes no manifest under -WhatIf' {
-        Invoke-FixtureBuild -OutputRoot $script:root -WhatIf
+        Invoke-FixtureBuild -OutputRoot $script:root -Preview
         $script:manifestPath | Should -Not -Exist
     }
 }
@@ -95,8 +95,16 @@ Describe 'Build-DriverBaseline script shape' {
         $parameter.DefaultValue.Extent.Text | Should -Be "(Join-Path `$PSScriptRoot '..\staging')"
     }
     It 'runs the build through the vendor operations' {
-        $operations = $script:ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandParameterAst] -and $node.ParameterName -eq 'Operation' }, $true) |
-            ForEach-Object { $_.Argument.Value }
+        # The value after -Operation is the next element of the command, not the parameter's own Argument.
+        $operations = foreach ($command in $script:ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+            $elements = @($command.CommandElements)
+            for ($i = 0; $i -lt $elements.Count - 1; $i++) {
+                $element = $elements[$i]
+                if ($element -is [System.Management.Automation.Language.CommandParameterAst] -and $element.ParameterName -eq 'Operation') {
+                    $elements[$i + 1].Value
+                }
+            }
+        }
         $operations | Should -Contain 'NewCustomPack'
         $operations | Should -Contain 'GetFirmware'
     }
