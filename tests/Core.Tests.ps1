@@ -26,6 +26,7 @@ Describe 'Kit.Core module' {
             'Get-KitConfig'
             'Get-KitPublishFile'
             'Get-KitFirmwareLayout', 'Test-FirmwareTarget', 'Test-FirmwareStage', 'Show-FirmwareStageFinding'
+            'Publish-FirmwareStage'
         )
         (Import-PowerShellDataFile -Path $script:coreManifest).FunctionsToExport | Should -Be $expected
     }
