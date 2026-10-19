@@ -41,3 +41,11 @@ Describe 'Vendor <Name> contract' -ForEach $script:descriptors {
         $problems | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Vendor discovery' {
+    It 'finds the HP descriptor in the default kit vendors folder' {
+        Import-Module (Join-Path $PSScriptRoot '..\kit\core\Kit.Core.psd1') -Force
+        $names = @(Get-KitVendor | ForEach-Object { $_.Name })
+        $names | Should -Contain 'HP'
+    }
+}

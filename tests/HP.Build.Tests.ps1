@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot '..\kit\core\Kit.Core.psd1') -Force
     Import-Module (Join-Path $PSScriptRoot '..\builder\vendors\hp\HP.Build.psm1') -Force
 
     # Fixtures mirror live HPCMSL 1.9.0 output for platform 8549 (2026-09-28).
@@ -21,9 +22,44 @@ Describe 'HP.Build module' {
     It 'loads offline without importing HPCMSL' {
         Get-Module -Name HPCMSL | Should -BeNullOrEmpty
     }
-    It 'exports exactly the four build helpers' {
+    It 'exports the four helpers and the four build operations' {
         $names = (Get-Command -Module HP.Build).Name | Sort-Object
-        $names | Should -Be @('ConvertTo-ReturnCodeMap', 'Select-BaselineSoftpaq', 'Select-OsRelease', 'Split-SoftpaqCommand')
+        $expected = @(
+            'ConvertTo-ReturnCodeMap', 'Get-HPKitModel', 'New-HPKitCustomPack', 'Save-HPKitFirmware'
+            'Save-HPKitVendorPack', 'Select-BaselineSoftpaq', 'Select-OsRelease', 'Split-SoftpaqCommand'
+        ) | Sort-Object
+        $names | Should -Be $expected
+    }
+}
+
+Describe 'Get-HPKitModel' {
+    BeforeAll {
+        $script:models = @(Get-HPKitModel)
+    }
+    It 'lists 840-g5 then 840-g6' {
+        $script:models.ModelId | Should -Be @('840-g5', '840-g6')
+    }
+    It 'reports the platform ids and whether they are verified' {
+        $script:models.Platform | Should -Be @('83B2', '8549')
+        $script:models.PlatformVerified | Should -Be @($false, $true)
+    }
+    It 'names the vendor and carries the profile path' {
+        $script:models.Vendor | Should -Be @('HP', 'HP')
+        $script:models[1].ProfilePath | Should -Exist
+    }
+}
+
+Describe 'Save-HPKitVendorPack' {
+    It 'is not implemented until Phase 4 and echoes what it was asked for' {
+        $g6 = Get-KitProfile -Vendor HP -ModelId 840-g6
+        $thrown = $null
+        try { Save-HPKitVendorPack -ModelProfile $g6 -OsVer 24H2 -OutputPath $TestDrive }
+        catch { $thrown = $_.Exception }
+        $thrown | Should -BeOfType ([System.NotImplementedException])
+        $thrown.Message | Should -BeLike '*BUILD-03*'
+        $thrown.Message | Should -BeLike '*840-g6*'
+        $thrown.Message | Should -BeLike '*24H2*'
+        $thrown.Message | Should -BeLike "*$TestDrive*"
     }
 }
 
