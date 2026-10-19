@@ -1,6 +1,16 @@
 # Test fixture: the target-plane half of a complete vendor. Each command echoes its operation and parameters.
 
 function Install-FixtureKitDriver {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the InstallDrivers operation.
+    .PARAMETER PackagePath
+    Folder of the driver package.
+    .PARAMETER OfflineImagePath
+    Offline image to service, if any.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
@@ -11,6 +21,14 @@ function Install-FixtureKitDriver {
 }
 
 function Install-FixtureKitFirmware {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the InstallFirmware operation.
+    .PARAMETER PackagePath
+    Folder of the firmware package.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
@@ -20,6 +38,12 @@ function Install-FixtureKitFirmware {
 }
 
 function Get-FixtureKitDeviceIdentity {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the GetDeviceIdentity helper.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param()
@@ -34,6 +58,12 @@ function Get-FixtureKitDeviceIdentity {
 }
 
 function Get-FixtureKitInstalledFirmware {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the GetInstalledFirmwareVersion helper.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param()

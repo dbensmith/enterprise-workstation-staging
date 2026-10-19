@@ -1,6 +1,12 @@
 # Test fixture: the build-plane half of a complete vendor. Each command echoes its operation and parameters.
 
 function Get-FixtureKitModel {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the ListModels operation.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param()
@@ -8,6 +14,18 @@ function Get-FixtureKitModel {
 }
 
 function Save-FixtureKitVendorPack {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the GetVendorPack operation.
+    .PARAMETER ModelProfile
+    Model profile object.
+    .PARAMETER OsVer
+    OS release.
+    .PARAMETER OutputPath
+    Output folder.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
@@ -19,6 +37,18 @@ function Save-FixtureKitVendorPack {
 }
 
 function New-FixtureKitCustomPack {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the NewCustomPack operation.
+    .PARAMETER ModelProfile
+    Model profile object.
+    .PARAMETER OsVer
+    OS release.
+    .PARAMETER OutputPath
+    Output folder.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([pscustomobject])]
     param(
@@ -32,6 +62,18 @@ function New-FixtureKitCustomPack {
 }
 
 function Save-FixtureKitFirmware {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the GetFirmware operation.
+    .PARAMETER ModelProfile
+    Model profile object.
+    .PARAMETER OsVer
+    OS release.
+    .PARAMETER OutputPath
+    Output folder.
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
