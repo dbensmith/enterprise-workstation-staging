@@ -5,11 +5,12 @@ title = "enterprise-workstation-staging"
 [extend]
 useDefault = true
 
-# Atera agent installer link or MSI properties carrying a real value. The committed example config
-# keeps these values empty (''), which this rule does not match, so no exception is needed.
+# Third-party installer link or MSI properties (RMM agents and similar) carrying a real value. The
+# committed example config keeps these values empty (''), which this rule does not match, so no
+# exception is needed.
 [[rules]]
-id = "atera-agent-link"
-description = "Atera agent installer link or MSI properties carrying a real account value"
-regex = '''(?i)(?:accountId|IntegratorLogin|customerId)\s*[=:]\s*['"]?([A-Za-z0-9%@._-]{6,})'''
+id = "installer-account-value"
+description = "Third-party installer link or MSI property carrying a real account, customer or token value"
+regex = '''(?i)(?:accountId|IntegratorLogin|customerId|installToken|enrollmentToken)\s*[=:]\s*['"]?([A-Za-z0-9%@._-]{6,})'''
 secretGroup = 1
-keywords = ["accountid", "integratorlogin", "customerid"]
+keywords = ["accountid", "integratorlogin", "customerid", "installtoken", "enrollmenttoken"]

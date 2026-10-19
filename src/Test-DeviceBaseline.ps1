@@ -1,12 +1,13 @@
-# Unit audit: serial, spec, BIOS, OS, activation, Atera. Run as admin: irm <url> | iex
+# Unit audit: serial, spec, BIOS, OS, activation, third-party services. Run as admin: irm <url> | iex
 [CmdletBinding()]
-param([string]$OutFile)  # not bound under irm | iex; use $env:PK_OUTFILE there
+param([string]$OutFile, [string[]]$ThirdPartyService)  # not bound under irm | iex; use $env:PK_OUTFILE and $env:PK_THIRDPARTY_SERVICES there
 if (-not $OutFile -and $env:PK_OUTFILE) { $OutFile = $env:PK_OUTFILE }
+if (-not $ThirdPartyService -and $env:PK_THIRDPARTY_SERVICES) { $ThirdPartyService = @($env:PK_THIRDPARTY_SERVICES -split "[,;]" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Warning "Not running as Administrator. Some checks (WMI services, physical disk) may be restricted."
 }
-# WMI must run (Atera and this script depend on it); some vendor images disable it
+# WMI must run (this script and most agent installers depend on it); some vendor images disable it
 Set-Service winmgmt -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service winmgmt -ErrorAction SilentlyContinue
 
@@ -52,9 +53,9 @@ if (-not $lic) {
     $lic = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL AND Name LIKE 'Windows%'" -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 $sls = Get-CimInstance SoftwareLicensingService -ErrorAction SilentlyContinue
-$atera = Get-Service -Name AteraAgent -ErrorAction SilentlyContinue
+$thirdPartyStates = @($ThirdPartyService | ForEach-Object { [pscustomobject]@{ Name = $_; Service = (Get-Service -Name $_ -ErrorAction SilentlyContinue) } })
 
-# Splashtop Streamer is pushed by Atera after first check-in = proof agent phoned home
+# Splashtop Streamer, when present, is reported as information only
 $splashCandidates = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
                     Where-Object DisplayName -like 'Splashtop*'
 $splash = $splashCandidates | Where-Object DisplayName -like 'Splashtop Streamer*' | Select-Object -First 1
@@ -220,7 +221,7 @@ $keyMatch = if ($fwLast -eq 'none') { 'NO FIRMWARE KEY' } elseif ($fwLast -eq $l
 $actOk    = ($lic.LicenseStatus -eq 1) -and ($chan -like 'OEM*') -and -not $kms
 
 $splashText = if ($splash) { "$($splash.DisplayName) $($splash.DisplayVersion)" } elseif ($splashSvc) { "service $($splashSvc.Status)" } else { 'NOT INSTALLED' }
-$ateraOk    = $atera -and $atera.Status -eq 'Running'
+$thirdPartyOk = -not ($thirdPartyStates | Where-Object { -not $_.Service -or $_.Service.Status -ne 'Running' })
 
 $cpuDisplayText = if ($cpuNote) { "$cpu ($cpuNote)" } else { $cpu }
 $specDisplayText = switch ($specStatus) {
@@ -251,7 +252,7 @@ $lines = @(
     "----------------------------------------------"
     " SPEC        : $specDisplayText"
     " ACTIVATION  : [$(PF $actOk)]"
-    " ATERA       : [$(PF $ateraOk)] agent $(if ($atera) { $atera.Status } else { 'NOT INSTALLED' })"
+    " THIRD-PARTY : $(if ($thirdPartyStates) { "[$(PF $thirdPartyOk)] " + (($thirdPartyStates | ForEach-Object { "$($_.Name) $(if ($_.Service) { $_.Service.Status } else { 'NOT INSTALLED' })" }) -join ', ') } else { '[info] no services requested' })"
     "               Splashtop [info]: $splashText"
     "=============================================="
 )
