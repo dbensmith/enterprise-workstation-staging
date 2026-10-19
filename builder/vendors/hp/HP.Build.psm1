@@ -1,5 +1,9 @@
 #Requires -Version 5.1
-# HP build-plane helpers. Builder PC only, never copied to a stick. Loads offline: no HPCMSL import at module load (build operations import it lazily, Plan 01-06).
+# HP build-plane module. Builder PC only, never copied to a stick. Loads offline: no HPCMSL import at
+# module load (build operations import it lazily).
+
+# Kit.Core is offline-safe and supplies Get-KitProfile and Get-KitPackagePath.
+Import-Module (Join-Path $PSScriptRoot '..\..\..\kit\core\Kit.Core.psd1')
 
 function Select-OsRelease {
     <#
@@ -110,4 +114,133 @@ function ConvertTo-ReturnCodeMap {
     $map
 }
 
-Export-ModuleMember -Function Select-OsRelease, Select-BaselineSoftpaq, Split-SoftpaqCommand, ConvertTo-ReturnCodeMap
+function Get-HPKitModel {
+    <#
+    .SYNOPSIS
+    List the HP models this kit has a profile for (ListModels operation).
+
+    .DESCRIPTION
+    Reads the HP profiles with Get-KitProfile and projects the fields a model picker needs. Offline:
+    no catalog query.
+
+    .EXAMPLE
+    Get-HPKitModel | Format-Table ModelId, Platform, PlatformVerified
+
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param()
+
+    foreach ($modelProfile in @(Get-KitProfile -Vendor HP)) {
+        [pscustomobject]@{
+            Vendor           = $modelProfile.Vendor
+            ModelId          = $modelProfile.ModelId
+            Name             = $modelProfile.Name
+            Platform         = $modelProfile.Platform
+            PlatformVerified = $modelProfile.PlatformVerified
+            ProfilePath      = $modelProfile.ProfilePath
+        }
+    }
+}
+
+function Save-HPKitVendorPack {
+    <#
+    .SYNOPSIS
+    Download HP's published driver pack for a model (GetVendorPack operation). Not implemented yet.
+
+    .DESCRIPTION
+    Delivered in Phase 4 (BUILD-03). The function exists now so the vendor contract sees the real
+    signature; it throws NotImplementedException naming what was asked for.
+
+    .PARAMETER ModelProfile
+    Model profile from Get-KitProfile.
+
+    .PARAMETER OsVer
+    OS release, or empty for the newest the catalog indexes.
+
+    .PARAMETER OutputPath
+    Staging root folder.
+
+    .EXAMPLE
+    Save-HPKitVendorPack -ModelProfile $modelProfile -OsVer 24H2 -OutputPath .\staging
+
+    .OUTPUTS
+    None. Always throws until Phase 4.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [AllowEmptyString()][string]$OsVer,
+        [Parameter(Mandatory)][string]$OutputPath
+    )
+
+    # Always throws: the pack download is Phase 4, so -WhatIf gets the same answer as a real run.
+    $null = $PSCmdlet.ShouldProcess($OutputPath, 'Download the vendor driver pack')
+    throw [System.NotImplementedException]::new("GetVendorPack (HP's published driver pack) is BUILD-03, delivered in Phase 4; requested for $($ModelProfile.ModelId) $OsVer -> $OutputPath.")
+}
+
+function New-HPKitCustomPack {
+    <#
+    .SYNOPSIS
+    Build the custom driver pack from the HP catalog (NewCustomPack operation).
+
+    .PARAMETER ModelProfile
+    Model profile from Get-KitProfile.
+
+    .PARAMETER OsVer
+    OS release, or empty for the newest the catalog indexes.
+
+    .PARAMETER OutputPath
+    Staging root folder.
+
+    .EXAMPLE
+    New-HPKitCustomPack -ModelProfile $modelProfile -OsVer '' -OutputPath .\staging
+
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [AllowEmptyString()][string]$OsVer,
+        [Parameter(Mandatory)][string]$OutputPath
+    )
+
+    $null = $PSCmdlet.ShouldProcess($OutputPath, 'Stage the model')
+    throw [System.NotImplementedException]::new("moved in by Task 2 of Plan 01-06 ($($ModelProfile.ModelId) $OsVer -> $OutputPath)")
+}
+
+function Save-HPKitFirmware {
+    <#
+    .SYNOPSIS
+    Download and extract the model's BIOS and firmware SoftPaqs (GetFirmware operation).
+
+    .PARAMETER ModelProfile
+    Model profile from Get-KitProfile.
+
+    .PARAMETER OsVer
+    OS release, or empty for the newest the catalog indexes.
+
+    .PARAMETER OutputPath
+    Staging root folder.
+
+    .EXAMPLE
+    Save-HPKitFirmware -ModelProfile $modelProfile -OsVer '' -OutputPath .\staging
+
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [AllowEmptyString()][string]$OsVer,
+        [Parameter(Mandatory)][string]$OutputPath
+    )
+
+    $null = $PSCmdlet.ShouldProcess($OutputPath, 'Stage the model')
+    throw [System.NotImplementedException]::new("moved in by Task 2 of Plan 01-06 ($($ModelProfile.ModelId) $OsVer -> $OutputPath)")
+}
+
+Export-ModuleMember -Function Select-OsRelease, Select-BaselineSoftpaq, Split-SoftpaqCommand, ConvertTo-ReturnCodeMap, Get-HPKitModel, Save-HPKitVendorPack, New-HPKitCustomPack, Save-HPKitFirmware
