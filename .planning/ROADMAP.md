@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A gitleaks scan of the full history is clean, and a commit containing a planted fake token is blocked by the pre-commit hook or CI check
   5. The operator supplies third-party installer settings by copying the committed `.example` config, and git treats the filled-in copy as ignored
 
-**Plans**: 5/8 plans executed
+**Plans**: 6/8 plans executed
 
 Plans:
 **Wave 1**
@@ -49,7 +49,7 @@ Plans:
 - [x] 01-05-PLAN.md — 840 G5/G6 profiles with the unverified-value guard; Get-KitConfig and the committed empty config example
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 01-06-PLAN.md — HP descriptor and build operations; vendor-neutral builder/Build-DriverBaseline.ps1 writing staging/<vendor>/<model>
+- [x] 01-06-PLAN.md — HP descriptor and build operations; vendor-neutral builder/Build-DriverBaseline.ps1 writing staging/<vendor>/<model>
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 01-07-PLAN.md — kit/Run.cmd and Run.ps1; vendor-neutral installer with -LogPath; audit moved to kit/ (no forwarder)
@@ -143,7 +143,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Modular Foundation | 5/8 | In Progress | - |
+| 1. Modular Foundation | 6/8 | In Progress | - |
 | 2. Tools Stick Firmware Staging | 0/TBD | Not started | - |
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
