@@ -9,6 +9,24 @@ BeforeAll {
         [pscustomobject]@{ OperatingSystem = 'Microsoft Windows 11'; OperatingSystemRelease = '24H2'; BuildNumber = '26100' }
         [pscustomobject]@{ OperatingSystem = 'Microsoft Windows 11'; OperatingSystemRelease = '21H2'; BuildNumber = '22000' }
     )
+    # HPCMSL is not installed on the builder PC and Pester can only mock a command that exists, so the build
+    # operations run against a stand-in module with HP's command and parameter names. The names belong to
+    # HPCMSL (plural noun, state-changing verb), so the stand-in is generated from this table instead of being
+    # written as functions that the style rules would judge as ours. Each command returns its bound parameters.
+    function Import-HPCMSLStandIn {
+        $spec = [ordered]@{
+            'Get-HPDeviceDetails'    = 'param($Platform, [switch]$OSList)'
+            'Get-HPSoftpaqList'      = 'param($Platform, $Os, $OsVer, [switch]$Quiet, [string[]]$Category)'
+            'New-HPBuildDriverPack'  = '[CmdletBinding(SupportsShouldProcess)] param([Parameter(ValueFromPipeline)]$Softpaq, $Path, $Name, $Format, $Os, $OSVer, [switch]$Overwrite)'
+            'Get-HPSoftpaq'          = 'param($Number, $Overwrite, [switch]$Quiet, [switch]$Extract, $DestinationPath)'
+            'Get-HPSoftpaqMetadata'  = 'param($Number)'
+        }
+        $source = foreach ($name in $spec.Keys) {
+            "function $name { $($spec[$name]); process { [pscustomobject]`$PSBoundParameters } }"
+        }
+        $null = New-Module -Name HPCMSL -ScriptBlock ([scriptblock]::Create($source -join "`n")) | Import-Module -Global -Force
+    }
+
     $script:drivers = @(
         [pscustomobject]@{ id = 'sp174163'; Name = 'Realtek High-Definition (HD) Audio Driver'; DPB = $true }
         [pscustomobject]@{ id = 'sp152918'; Name = 'AMD Video Driver and Control Panel'; DPB = $true }
@@ -132,28 +150,7 @@ Describe 'ConvertTo-ReturnCodeMap' {
 Describe 'New-HPKitCustomPack' {
     BeforeAll {
         $script:g6 = Get-KitProfile -Vendor HP -ModelId 840-g6
-        $null = New-Module -Name HPCMSL -ScriptBlock {
-            function Get-HPDeviceDetails {
-                param($Platform, [switch]$OSList)
-                [pscustomobject]$PSBoundParameters
-            }
-            function Get-HPSoftpaqList {
-                param($Platform, $Os, $OsVer, [switch]$Quiet, [string[]]$Category)
-                [pscustomobject]$PSBoundParameters
-            }
-            function New-HPBuildDriverPack {
-                param([Parameter(ValueFromPipeline)]$Softpaq, $Path, $Name, $Format, $Os, $OSVer, [switch]$Overwrite)
-                process { [pscustomobject]$PSBoundParameters }
-            }
-            function Get-HPSoftpaq {
-                param($Number, $Overwrite, [switch]$Quiet, [switch]$Extract, $DestinationPath)
-                [pscustomobject]$PSBoundParameters
-            }
-            function Get-HPSoftpaqMetadata {
-                param($Number)
-                [pscustomobject]$PSBoundParameters
-            }
-        } | Import-Module -Global -Force
+        Import-HPCMSLStandIn
     }
     AfterAll {
         Remove-Module -Name HPCMSL -Force -ErrorAction SilentlyContinue
@@ -185,9 +182,13 @@ Describe 'New-HPKitCustomPack' {
             $script:result.Excluded.Id | Should -Be @('sp152918', 'sp168736', 'sp109038')
             $script:result.Excluded.Stage | Should -Be @('Drivers', 'Drivers', 'Drivers')
         }
-        It 'builds the driver pack once into the package root as Drivers' {
-            Should -Invoke New-HPBuildDriverPack -ModuleName HP.Build -Exactly 1 -ParameterFilter {
+        It 'builds the driver pack into the package root as Drivers, from the included SoftPaqs only' {
+            # A mock sees each piped SoftPaq as its own call, so two included SoftPaqs are two calls.
+            Should -Invoke New-HPBuildDriverPack -ModuleName HP.Build -Exactly 2 -ParameterFilter {
                 $Path -eq (Join-Path $script:root 'hp\840-g6\win11-24H2') -and $Name -eq 'Drivers'
+            }
+            Should -Invoke New-HPBuildDriverPack -ModuleName HP.Build -Exactly 0 -ParameterFilter {
+                $Softpaq.id -in 'sp152918', 'sp168736', 'sp109038'
             }
         }
         It 'records the HPCMSL version in ToolVersions' {
@@ -225,24 +226,7 @@ Describe 'New-HPKitCustomPack' {
 Describe 'Save-HPKitFirmware' {
     BeforeAll {
         $script:g6 = Get-KitProfile -Vendor HP -ModelId 840-g6
-        $null = New-Module -Name HPCMSL -ScriptBlock {
-            function Get-HPDeviceDetails {
-                param($Platform, [switch]$OSList)
-                [pscustomobject]$PSBoundParameters
-            }
-            function Get-HPSoftpaqList {
-                param($Platform, $Os, $OsVer, [switch]$Quiet, [string[]]$Category)
-                [pscustomobject]$PSBoundParameters
-            }
-            function Get-HPSoftpaq {
-                param($Number, $Overwrite, [switch]$Quiet, [switch]$Extract, $DestinationPath)
-                [pscustomobject]$PSBoundParameters
-            }
-            function Get-HPSoftpaqMetadata {
-                param($Number)
-                [pscustomobject]$PSBoundParameters
-            }
-        } | Import-Module -Global -Force
+        Import-HPCMSLStandIn
 
         $script:firmware = @(
             [pscustomobject]@{ id = 'sp174025'; Name = 'HP Elite/ProBook Notebook System BIOS (R70)'; Version = '01.36.00'; Category = 'BIOS'; ReleaseDate = '2025-01-01'; SSM = $true }

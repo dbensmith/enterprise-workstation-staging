@@ -114,6 +114,92 @@ function ConvertTo-ReturnCodeMap {
     $map
 }
 
+function Initialize-HPCMSL {
+    # Import HPCMSL, installing it from the PowerShell Gallery first when it is missing. Build operations
+    # call this lazily, so merely importing this module never needs HPCMSL.
+    [CmdletBinding()]
+    param()
+
+    if (Get-Module -ListAvailable -Name HPCMSL) {
+        Import-Module HPCMSL
+        return
+    }
+
+    Write-Information 'Installing HPCMSL from the PowerShell Gallery...'
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        # Windows PowerShell 5.1 defaults to TLS 1.0/1.1, which the Gallery rejects.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+    }
+    $install = @{ Name = 'HPCMSL'; Scope = 'AllUsers'; Force = $true }
+    # -AcceptLicense only exists in PowerShellGet 2.x+; inbox 1.0.0.1 on 5.1 lacks it.
+    if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) { $install.AcceptLicense = $true }
+    Install-Module @install
+    Import-Module HPCMSL
+}
+
+function Test-HPKitElevation {
+    # True when the session runs as an administrator.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-HPKitElevation {
+    # New-HPBuildDriverPack and SoftPaq self-extraction both require elevation. -WhatIf only reads the catalog.
+    [CmdletBinding()]
+    param()
+
+    if (-not $WhatIfPreference -and -not (Test-HPKitElevation)) {
+        throw 'Run from an elevated PowerShell session (or add -WhatIf to preview the selection).'
+    }
+}
+
+function Reset-HPKitDirectory {
+    # Empty a stage's output so SoftPaqs superseded since the last build don't linger.
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Recreate empty directory')) { return }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
+    $null = New-Item -Path $Path -ItemType Directory -Force
+}
+
+function ConvertTo-HPKitSoftpaqSummary {
+    # The fields the manifest records for one SoftPaq.
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param([Parameter(Mandatory, ValueFromPipeline)][object]$Softpaq)
+
+    process {
+        [pscustomobject]@{ Id = $Softpaq.id; Name = $Softpaq.Name; Version = $Softpaq.Version; Category = $Softpaq.Category; ReleaseDate = $Softpaq.ReleaseDate }
+    }
+}
+
+function Resolve-HPKitOsRelease {
+    # The catalog release to build against: the requested one if HP indexes it, else the newest.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [AllowEmptyString()][string]$OsVer
+    )
+
+    $requested = if ($OsVer) { $OsVer } else { $ModelProfile.OsVer }
+    Select-OsRelease -OsList (Get-HPDeviceDetails -Platform $ModelProfile.Platform -OSList) -Os $ModelProfile.Os -OsVer $requested
+}
+
+function Get-HPKitToolVersion {
+    # Versions of the tools that produced a package, recorded in the manifest.
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+
+    @{ HPCMSL = "$((Get-Module HPCMSL).Version)" }
+}
+
 function Get-HPKitModel {
     <#
     .SYNOPSIS
@@ -202,14 +288,40 @@ function New-HPKitCustomPack {
     System.Management.Automation.PSCustomObject
     #>
     [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)][hashtable]$ModelProfile,
         [AllowEmptyString()][string]$OsVer,
         [Parameter(Mandatory)][string]$OutputPath
     )
 
-    $null = $PSCmdlet.ShouldProcess($OutputPath, 'Stage the model')
-    throw [System.NotImplementedException]::new("moved in by Task 2 of Plan 01-06 ($($ModelProfile.ModelId) $OsVer -> $OutputPath)")
+    Assert-HPKitElevation
+    Initialize-HPCMSL
+    $osRelease = Resolve-HPKitOsRelease -ModelProfile $ModelProfile -OsVer $OsVer
+    Write-Information "$($ModelProfile.Name) [$($ModelProfile.Platform)]: building against HP catalog $($ModelProfile.Os) $osRelease"
+    $packageDir = Get-KitPackagePath -OutputRoot $OutputPath -Vendor HP -ModelId $ModelProfile.ModelId -Os $ModelProfile.Os -OsVer $osRelease
+    $query = @{ Platform = $ModelProfile.Platform; Os = $ModelProfile.Os; OsVer = $osRelease; Quiet = $true }
+
+    $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category Driver) -Exclude $ModelProfile.DriverExclude -RequireDriverPack
+    if (-not $selection.Included) { throw 'Driver selection is empty; check the profile excludes and catalog.' }
+
+    $driverDir = Join-Path $packageDir 'Drivers'
+    Reset-HPKitDirectory -Path $driverDir
+    if ($PSCmdlet.ShouldProcess($driverDir, "Build driver pack from $($selection.Included.Count) SoftPaqs")) {
+        # The pack lands in <Path>\<Name>, so build into the package root to get <package>\Drivers.
+        # HPCMSL's own "JSON is truncated" warning here is harmless: it's its internal Drivers\manifest.json.
+        $null = $selection.Included | New-HPBuildDriverPack -Path $packageDir -Name 'Drivers' -Format NoCompressedFile -Os $ModelProfile.Os -OSVer $osRelease -Overwrite
+    }
+
+    [pscustomobject]@{
+        Operation    = 'NewCustomPack'
+        PackagePath  = $packageDir
+        OsVer        = $osRelease
+        PackKind     = 'custom'
+        Drivers      = @($selection.Included | ConvertTo-HPKitSoftpaqSummary)
+        Excluded     = @($selection.Excluded | Select-Object -Property *, @{ Name = 'Stage'; Expression = { 'Drivers' } })
+        ToolVersions = Get-HPKitToolVersion
+    }
 }
 
 function Save-HPKitFirmware {
@@ -233,14 +345,56 @@ function Save-HPKitFirmware {
     System.Management.Automation.PSCustomObject
     #>
     [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)][hashtable]$ModelProfile,
         [AllowEmptyString()][string]$OsVer,
         [Parameter(Mandatory)][string]$OutputPath
     )
 
-    $null = $PSCmdlet.ShouldProcess($OutputPath, 'Stage the model')
-    throw [System.NotImplementedException]::new("moved in by Task 2 of Plan 01-06 ($($ModelProfile.ModelId) $OsVer -> $OutputPath)")
+    Assert-HPKitElevation
+    Initialize-HPCMSL
+    $osRelease = Resolve-HPKitOsRelease -ModelProfile $ModelProfile -OsVer $OsVer
+    Write-Information "$($ModelProfile.Name) [$($ModelProfile.Platform)]: staging firmware from HP catalog $($ModelProfile.Os) $osRelease"
+    $packageDir = Get-KitPackagePath -OutputRoot $OutputPath -Vendor HP -ModelId $ModelProfile.ModelId -Os $ModelProfile.Os -OsVer $osRelease
+    $query = @{ Platform = $ModelProfile.Platform; Os = $ModelProfile.Os; OsVer = $osRelease; Quiet = $true }
+
+    $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category BIOS, Firmware) -Exclude $ModelProfile.FirmwareExclude
+    $firmwareDir = Join-Path $packageDir 'Firmware'
+    Reset-HPKitDirectory -Path $firmwareDir
+
+    $firmware = @(foreach ($sp in $selection.Included) {
+            $number = $sp.id -replace '^sp', ''
+            $extractDir = Join-Path $firmwareDir $sp.id
+            if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
+                # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
+                $null = Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
+            }
+
+            $meta = Get-HPSoftpaqMetadata -Number $number
+            $silent = $meta.'Install Execution'.SilentInstall
+            $entry = $sp | ConvertTo-HPKitSoftpaqSummary
+            $entry | Add-Member -NotePropertyMembers ([ordered]@{
+                    Path           = "Firmware/$($sp.id)"
+                    # Only HP's SSM-flagged (silent-supported) SoftPaqs are auto-applied; others are staged for a technician.
+                    AutoInstall    = [bool]($sp.SSM -and $silent)
+                    SilentInstall  = $(if ($silent) { Split-SoftpaqCommand $silent })  # $() so Windows PowerShell 5.1 parses it
+                    RebootRequired = $meta.General.SystemMustBeRebooted -eq '1'
+                    # CVA [Devices] hardware IDs (e.g. a specific SSD model); the installer skips the item when none is present.
+                    Devices        = @($meta.Devices.Keys | Where-Object { $_ -ne '_body' })
+                    ReturnCodes    = ConvertTo-ReturnCodeMap $meta.ReturnCode
+                })
+            $entry
+        })
+
+    [pscustomobject]@{
+        Operation    = 'GetFirmware'
+        PackagePath  = $packageDir
+        OsVer        = $osRelease
+        Firmware     = $firmware
+        Excluded     = @($selection.Excluded | Select-Object -Property *, @{ Name = 'Stage'; Expression = { 'Firmware' } })
+        ToolVersions = Get-HPKitToolVersion
+    }
 }
 
 Export-ModuleMember -Function Select-OsRelease, Select-BaselineSoftpaq, Split-SoftpaqCommand, ConvertTo-ReturnCodeMap, Get-HPKitModel, Save-HPKitVendorPack, New-HPKitCustomPack, Save-HPKitFirmware
