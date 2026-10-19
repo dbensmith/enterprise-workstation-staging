@@ -166,7 +166,7 @@ Describe 'HP firmware install' {
         $script:definedStubs = @()
         foreach ($stub in 'Get-BitLockerVolume', 'Suspend-BitLocker') {
             if (-not (Get-Command -Name $stub -ErrorAction SilentlyContinue)) {
-                Set-Item -Path "Function:\global:$stub" -Value { param($MountPoint, $RebootCount) }
+                Set-Item -Path "Function:\global:$stub" -Value { param($MountPoint, $RebootCount) $null = $MountPoint, $RebootCount }
                 $script:definedStubs += $stub
             }
         }
