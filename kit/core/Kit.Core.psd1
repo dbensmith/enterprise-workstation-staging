@@ -23,6 +23,7 @@
         'Get-KitVerifiedValue'
         'Get-KitConfig'
         'Get-KitPublishFile'
+        'Test-FirmwareTarget'
         'Test-FirmwareStage'
         'Show-FirmwareStageFinding'
     )
