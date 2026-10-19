@@ -115,9 +115,10 @@ Describe 'Invoke-KitVendorCommand' {
     }
 
     It 'runs a build operation through the build module' {
-        $result = Invoke-KitVendorCommand -Vendor $script:fixtureVendor -Operation GetFirmware -Parameters @{ ModelProfile = 'm'; OsVer = '24H2'; OutputPath = 'o' }
+        $modelProfile = Get-KitProfile -Path (Join-Path $PSScriptRoot 'fixtures\profiles\fixture\m1.psd1')
+        $result = Invoke-KitVendorCommand -Vendor $script:fixtureVendor -Operation GetFirmware -Parameters @{ ModelProfile = $modelProfile; OsVer = '24H2'; OutputPath = $TestDrive; WhatIf = $true }
         $result.Operation | Should -Be 'GetFirmware'
-        $result.OutputPath | Should -Be 'o'
+        $result.PackagePath | Should -Be (Join-Path $TestDrive 'fixture\m1\win11-24H2')
     }
 
     It 'refuses a build operation when the vendor has no build module' {
