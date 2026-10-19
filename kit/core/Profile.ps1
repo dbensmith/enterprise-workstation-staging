@@ -157,3 +157,77 @@ function Get-KitProfile {
     }
     Read-KitProfileFile -Path $match[0].FullName
 }
+
+function Get-KitVerifiedValue {
+    <#
+    .SYNOPSIS
+    Read a profile value that may not have been confirmed on hardware, refusing it unless it is verified.
+
+    .DESCRIPTION
+    FirmwareMinimum and BiosDefaults are read through the Verified flag of their own block, Platform through
+    PlatformVerified. A value whose flag is not exactly $true makes the function throw
+    "<Name> for <ModelId> is unverified (Verified = $false); confirm on hardware first. Source: <Source>".
+    With -AllowUnverified the same text is written as a warning and the value is returned, so a caller
+    that relies on an unconfirmed value says so out loud.
+
+    Code outside this file must not read the FirmwareMinimum or BiosDefaults keys directly:
+    tests\Profiles.Tests.ps1 scans kit and builder for that.
+
+    .PARAMETER ModelProfile
+    A profile returned by Get-KitProfile.
+
+    .PARAMETER Name
+    FirmwareMinimum returns the block's own values without its Verified and Source keys.
+    BiosDefaults returns the Settings hashtable. Platform returns the platform id string.
+
+    .PARAMETER AllowUnverified
+    Return an unverified value with a warning instead of throwing.
+
+    .EXAMPLE
+    Get-KitVerifiedValue -ModelProfile $modelProfile -Name Platform -AllowUnverified
+
+    .OUTPUTS
+    System.Collections.Hashtable or System.String
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [Parameter(Mandatory)][ValidateSet('FirmwareMinimum', 'BiosDefaults', 'Platform')][string]$Name,
+        [switch]$AllowUnverified
+    )
+
+    $modelLabel = if ($ModelProfile.ContainsKey('ModelId')) { $ModelProfile.ModelId } else { '(unknown model)' }
+    if (-not $ModelProfile.ContainsKey($Name)) {
+        throw "$Name for $modelLabel is not in the profile; load it with Get-KitProfile."
+    }
+
+    switch ($Name) {
+        'Platform' {
+            $verified = if ($ModelProfile.ContainsKey('PlatformVerified')) { $ModelProfile.PlatformVerified } else { $false }
+            $source = if ($ModelProfile.ContainsKey('PlatformSource')) { $ModelProfile.PlatformSource } else { 'not recorded' }
+            $value = $ModelProfile.Platform
+        }
+        'FirmwareMinimum' {
+            $block = $ModelProfile.FirmwareMinimum
+            $verified = $block.Verified
+            $source = $block.Source
+            $value = @{}
+            foreach ($key in $block.Keys) {
+                if ($key -notin 'Verified', 'Source') { $value[$key] = $block[$key] }
+            }
+        }
+        'BiosDefaults' {
+            $block = $ModelProfile.BiosDefaults
+            $verified = $block.Verified
+            $source = $block.Source
+            $value = $block.Settings
+        }
+    }
+
+    if ($verified -ne $true) {
+        $message = "$Name for $modelLabel is unverified (Verified = `$false); confirm on hardware first. Source: $source"
+        if (-not $AllowUnverified) { throw $message }
+        Write-Warning $message
+    }
+    $value
+}
