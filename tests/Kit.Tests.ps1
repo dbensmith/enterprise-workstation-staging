@@ -64,11 +64,23 @@ Describe 'Run.cmd launcher' {
 }
 
 Describe 'Install through the vendor interface' {
-    It 'runs the whole path from cmd.exe as a -WhatIf rehearsal and exits 0' {
-        $run = Invoke-KitChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', 'kit\Run.cmd', '-Mode', 'Install', '-PackagePath', $script:minimalPackage, '-Vendor', 'HP', '-Force', '-WhatIf')
-        $run.Output | Should -Match 'Baseline: Fixture package'
-        $run.Output | Should -Match 'Done with 0 failure\(s\)'
-        $run.ExitCode | Should -Be 0
+    Context 'a -WhatIf rehearsal from cmd.exe' {
+        BeforeAll {
+            $script:rehearsal = Invoke-KitChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', 'kit\Run.cmd', '-Mode', 'Install', '-PackagePath', $script:minimalPackage, '-Vendor', 'HP', '-Force', '-WhatIf')
+        }
+        It 'runs the whole path and exits 0' {
+            $script:rehearsal.Output | Should -Match 'Baseline: Fixture package'
+            $script:rehearsal.Output | Should -Match 'Done with 0 failure\(s\)'
+            $script:rehearsal.ExitCode | Should -Be 0
+        }
+        It 'reports whether third-party settings are present' {
+            $script:rehearsal.Output | Should -Match '(?m)^(WARNING: )?Third-party settings: '
+        }
+    }
+    It 'refuses -Mode Install without a package path' {
+        $run = Invoke-KitChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', 'kit\Run.cmd', '-Mode', 'Install', '-WhatIf')
+        $run.ExitCode | Should -Not -Be 0
+        $run.Output | Should -Match '-PackagePath is required'
     }
     Context 'the installer script' {
         BeforeAll {
@@ -86,5 +98,99 @@ Describe 'Install through the vendor interface' {
             @($commands | Where-Object { $_ -like '*-HP*' -or $_ -like '*HPCMSL*' }) | Should -BeNullOrEmpty
             $commands | Should -Not -Contain 'Get-KitConfig'
         }
+    }
+}
+
+Describe 'Installer transcript and exit codes' {
+    BeforeAll {
+        # The first-boot shape: powershell.exe -File <installer> -PackagePath <p> -LogPath <file>
+        function Invoke-InstallerChild {
+            param(
+                [Parameter(Mandatory)][string]$Package,
+                [Parameter(Mandatory)][string]$Log,
+                [string[]]$Extra = @()
+            )
+            Invoke-KitChild -FilePath 'powershell.exe' -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'kit\Install-DriverBaseline.ps1',
+                    '-PackagePath', $Package, '-Vendor', 'HP', '-Force', '-WhatIf', '-LogPath', $Log) + $Extra)
+        }
+    }
+    It 'binds -LogPath, exits 0 and keeps the run in the transcript' {
+        $log = Join-Path $TestDrive 'first.log'
+        $run = Invoke-InstallerChild -Package 'tests\fixtures\packages\minimal' -Log $log
+        $run.ExitCode | Should -Be 0
+        $log | Should -Exist
+        $text = Get-Content -LiteralPath $log -Raw
+        $text | Should -Match 'Done with 0 failure\(s\)'
+        $text | Should -Match 'End time'
+    }
+    It 'exits 1 for a missing firmware executable and still closes the transcript' {
+        $log = Join-Path $TestDrive 'broken.log'
+        $run = Invoke-InstallerChild -Package 'tests\fixtures\packages\broken-fw' -Log $log
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match 'executable not found'
+        $text = Get-Content -LiteralPath $log -Raw
+        $text | Should -Match 'executable not found'
+        $text | Should -Match 'End time'
+    }
+    It 'rehearses an offline image injection and shows the dism.exe command' {
+        $package = Join-Path $TestDrive 'offline-pkg'
+        $null = New-Item -ItemType Directory -Path (Join-Path $package 'Drivers') -Force
+        Copy-Item -LiteralPath (Join-Path $script:repo 'tests\fixtures\packages\minimal\manifest.json') -Destination $package
+        $image = Join-Path $TestDrive 'mounted-image'
+        $null = New-Item -ItemType Directory -Path $image -Force
+        $run = Invoke-KitChild -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'kit\Install-DriverBaseline.ps1',
+            '-PackagePath', $package, '-Vendor', 'HP', '-OfflineImagePath', $image, '-WhatIf')
+        $run.ExitCode | Should -Be 0
+        $run.Output | Should -Match 'dism\.exe'
+    }
+    It 'writes the transcript start and stop inside try/finally with WhatIf off' {
+        $text = Get-Content -LiteralPath $script:installer -Raw
+        $text | Should -Match ([regex]::Escape('Start-Transcript -Path $LogPath -Append -WhatIf:$false'))
+        $ast = Read-ScriptAst -Path $script:installer
+        $try = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TryStatementAst] }, $false))
+        $try.Count | Should -Be 1
+        $try[0].Finally.Extent.Text | Should -Match ([regex]::Escape('Stop-Transcript -WhatIf:$false'))
+    }
+}
+
+Describe 'Run.ps1 config presence and elevation' {
+    BeforeAll {
+        $script:runAst = Read-ScriptAst -Path $script:runPs1
+        $script:auditIf = @($script:runAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -match "\`$Mode\s+-eq\s+'Audit'"
+                }, $false))
+    }
+    It 'starts exactly one elevated process, in the Install branch only' {
+        $starts = @($script:runAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Process'
+                }, $true))
+        $starts.Count | Should -Be 1
+        $starts[0].Extent.Text | Should -Match '-Verb\s+RunAs'
+        $script:auditIf.Count | Should -Be 1
+        $script:auditIf[0].ElseClause | Should -Not -BeNullOrEmpty
+        $install = $script:auditIf[0].ElseClause.Extent
+        $starts[0].Extent.StartOffset | Should -BeGreaterThan $install.StartOffset
+        $starts[0].Extent.EndOffset | Should -BeLessThan $install.EndOffset
+    }
+    It 'quotes the relaunch line with ConvertTo-KitCommandLine and reads the config' {
+        $text = Get-Content -LiteralPath $script:runPs1 -Raw
+        $text | Should -Match 'ConvertTo-KitCommandLine'
+        $text | Should -Match 'Get-KitConfig'
+        $text | Should -Not -Match 'Set-ExecutionPolicy'
+    }
+    It 'shows that settings are present without printing a value' {
+        $copy = Join-Path $TestDrive 'kitcopy'
+        Copy-Item -LiteralPath (Join-Path $script:repo 'kit') -Destination $copy -Recurse
+        $secret = 'zz-sentinel-' + [guid]::NewGuid().ToString('N')
+        Set-Content -LiteralPath (Join-Path $copy 'config.local.psd1') -Value "@{ ThirdParty = @{ InstallToken = '$secret' } }"
+        $log = Join-Path $TestDrive 'secret.log'
+        $package = Join-Path $script:repo 'tests\fixtures\packages\minimal'
+        $run = Invoke-KitChild -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', (Join-Path $copy 'Run.cmd'), '-Mode', 'Install', '-PackagePath', $package, '-Vendor', 'HP', '-Force', '-WhatIf', '-LogPath', $log)
+        $run.ExitCode | Should -Be 0
+        $run.Output | Should -Match 'Third-party settings: found in config\.local\.psd1'
+        $run.Output | Should -Not -Match $secret
+        (Get-Content -LiteralPath $log -Raw) | Should -Not -Match $secret
     }
 }
