@@ -443,15 +443,42 @@ function Get-HPKitFirmwareStickLayout {
     $layout = Get-KitFirmwareLayout -Path $LayoutPath
     $platformId = Get-KitVerifiedValue -ModelProfile $ModelProfile -Name Platform -AllowUnverified
 
+    # The build stops on the first problem and names the file: nothing is staged from a download that cannot be trusted.
     $catalog = @(Get-HPBIOSUpdates -Platform $platformId -All)
+    if ($catalog.Count -eq 0) {
+        throw "The HP catalog lists no BIOS update for platform $platformId ($($ModelProfile.ModelId)); there is no image to resolve."
+    }
     $latest = $catalog | Sort-Object -Property @{ Expression = { [version]$_.Ver }; Descending = $true } | Select-Object -First 1
     $version = [version]$latest.Ver
     $bin = [string]$latest.Bin
+    $vendorSha384 = ([string]$latest.Sha384).ToLowerInvariant()
+    if (-not $vendorSha384) {
+        throw "The HP catalog entry for $bin (BIOS $($latest.Ver)) has no SHA-384, so the image cannot be verified."
+    }
+    if ([string]::IsNullOrWhiteSpace($bin) -or $bin.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+        throw "The HP catalog file name '$bin' for BIOS $($latest.Ver) is not a plain file name (it is empty, or holds a path separator or another character a file name cannot hold)."
+    }
 
     $firmwareDir = Join-Path -Path $PackagePath -ChildPath 'Firmware'
-    $image = @(Get-ChildItem -LiteralPath $firmwareDir -Recurse -File -Filter $bin)[0]
+    $found = @()
+    if (Test-Path -LiteralPath $firmwareDir -PathType Container) {
+        $found = @(Get-ChildItem -LiteralPath $firmwareDir -Recurse -File -Filter $bin)
+    }
+    if ($found.Count -eq 0) {
+        throw "BIOS image $bin ($($latest.Ver)) was not found under $firmwareDir; run the firmware stage first."
+    }
+    if ($found.Count -gt 1) {
+        throw "BIOS image $bin ($($latest.Ver)) was found in more than one folder: $(($found | ForEach-Object { $_.DirectoryName }) -join '; '). Remove the extra copy and run the firmware stage again."
+    }
+    $image = $found[0]
+    if (-not $bin.StartsWith([string]$ModelProfile.BiosFamily, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "BIOS image $bin does not belong to $($ModelProfile.ModelId): a $($ModelProfile.BiosFamily) image name starts with $($ModelProfile.BiosFamily)."
+    }
+    $sha384 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA384).Hash.ToLowerInvariant()
+    if ($sha384 -ne $vendorSha384) {
+        throw "BIOS image $bin does not match the HP catalog hash for $($latest.Ver) (catalog $vendorSha384, file $sha384); download it again."
+    }
     $sha256 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $vendorSha384 = ([string]$latest.Sha384).ToLowerInvariant()
 
     $entries = foreach ($group in $layout.Groups) {
         $folder = $group.Folder.Replace('{Platform}', $platformId)

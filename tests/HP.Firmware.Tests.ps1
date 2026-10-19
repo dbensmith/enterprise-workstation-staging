@@ -49,7 +49,7 @@ BeforeAll {
         [OutputType([pscustomobject])]
         param(
             [Parameter(Mandatory)][string]$Ver,
-            [Parameter(Mandatory)][string]$Bin,
+            [Parameter(Mandatory)][AllowEmptyString()][string]$Bin,
             [AllowEmptyString()][string]$Sha384,
             [object]$Date = '2026-06-13'
         )
@@ -234,6 +234,130 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $pkg.PackagePath -LayoutPath $copy
             $result.LayoutPath | Should -Be $copy
             @($result.Entries) | Should -HaveCount 6
+        }
+    }
+
+    Context 'when the download cannot be trusted' {
+        BeforeEach {
+            $script:pkg = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384)
+        }
+
+        It 'throws, naming the platform and model, for an empty catalog' {
+            $script:catalog = @()
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*8549*'
+            $message | Should -BeLike '*840-g6*'
+            $message | Should -BeLike '*no BIOS update*'
+        }
+
+        It 'throws, naming the file, for a catalog entry with no SHA-384' -ForEach @(
+            @{ Value = '' }
+            @{ Value = $null }
+        ) {
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $Value)
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*SHA-384*'
+        }
+
+        It 'throws, naming the file, for a catalog file name with <Name>' -ForEach @(
+            @{ Name = 'a path separator'; Bin = '..\x.bin' }
+            @{ Name = 'a forward slash'; Bin = 'sub/R70_013600.bin' }
+            @{ Name = 'a wildcard'; Bin = 'R70_*.bin' }
+            @{ Name = 'a drive prefix'; Bin = 'C:R70_013600.bin' }
+        ) {
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin $Bin -Sha384 $script:pkg.Sha384)
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike "*$Bin*"
+            $message | Should -BeLike '*plain file name*'
+        }
+
+        It 'throws for a catalog entry with no file name' {
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin '' -Sha384 $script:pkg.Sha384)
+            { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath } | Should -Throw '*plain file name*'
+        }
+
+        It 'throws, naming the file and telling to run the firmware stage, when the image is missing' {
+            Remove-Item -LiteralPath $script:pkg.Image
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*run the firmware stage first*'
+        }
+
+        It 'throws the same message when the package has no Firmware folder at all' {
+            $empty = Join-Path $script:root 'hp\840-g6\empty'
+            $null = New-Item -Path $empty -ItemType Directory -Force
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $empty }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*run the firmware stage first*'
+        }
+
+        It 'throws, listing both folders, when the image sits in two SoftPaq folders' {
+            $copyDir = Join-Path $script:pkg.PackagePath 'Firmware\sp999999'
+            $null = New-Item -Path $copyDir -ItemType Directory
+            Copy-Item -LiteralPath $script:pkg.Image -Destination $copyDir
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*sp174025*'
+            $message | Should -BeLike '*sp999999*'
+        }
+
+        It 'throws, naming the file and the family, when a G6 image is offered to the G5' {
+            $g5Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g5 -OsFolder win11-22H2 -SoftPaq sp157750 -Bin R70_013600.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $g5Package.Sha384)
+            $message = Get-ThrownMessage -Action {
+                Get-HPKitFirmwareStickLayout -ModelProfile $script:g5 -PackagePath $g5Package.PackagePath -WarningAction SilentlyContinue
+            }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*Q78*'
+        }
+
+        It 'throws, naming the file and the version, when the SHA-384 differs from the catalog' {
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 ('C' * 96))
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*R70_013600.bin*'
+            $message | Should -BeLike '*does not match the HP catalog hash for 1.36.00*'
+        }
+
+        It 'accepts a catalog SHA-384 written in either case' {
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384.ToLowerInvariant())
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            @($result.Entries) | Should -HaveCount 6
+        }
+
+        It 'changes nothing on disk' {
+            $snapshot = {
+                @(Get-ChildItem -LiteralPath $script:root -Recurse -Force | Sort-Object -Property FullName |
+                        ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })
+            }
+            $before = & $snapshot
+            $null = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            $after = & $snapshot
+            $before | Should -Not -BeNullOrEmpty
+            $after | Should -Be $before
+        }
+    }
+
+    Context 'the 840 G5 and G6 together' {
+        It 'never share a destination path and keep the file name each one ships' {
+            $g6Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin
+            $g5Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g5 -OsFolder win11-22H2 -SoftPaq sp157750 -Bin Q78_013100.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $g6Package.Sha384)
+            $g6 = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $g6Package.PackagePath
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.31.00' -Bin 'Q78_013100.bin' -Sha384 $g5Package.Sha384 -Date '2025-04-30')
+            $g5 = Get-HPKitFirmwareStickLayout -ModelProfile $script:g5 -PackagePath $g5Package.PackagePath -WarningAction SilentlyContinue
+
+            # The two Esc-DEVFW groups copy the image to the fixed name firmware.bin, so they would collide by design;
+            # they are off by default (that folder holds one model only). Every BIOS image group keeps the shipped name.
+            $g5Bios = @($g5.Entries | Where-Object { $_.RelativePath -notlike '*\firmware.bin' })
+            $g6Bios = @($g6.Entries | Where-Object { $_.RelativePath -notlike '*\firmware.bin' })
+            $g5Bios | Should -HaveCount 4
+            $g6Bios | Should -HaveCount 4
+            @($g5Bios.RelativePath | Where-Object { $g6Bios.RelativePath -contains $_ }) | Should -HaveCount 0
+            foreach ($path in $g5Bios.RelativePath) { $path | Should -BeLike '*\Q78_013100.bin' }
+            foreach ($path in $g6Bios.RelativePath) { $path | Should -BeLike '*\R70_013600.bin' }
+            $g5Bios[0].Sha256 | Should -Not -Be $g6Bios[0].Sha256
         }
     }
 }
