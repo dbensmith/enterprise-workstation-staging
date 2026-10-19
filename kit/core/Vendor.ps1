@@ -91,15 +91,32 @@ function Read-KitVendorDescriptor {
 function Get-KitVendor {
     <#
     .SYNOPSIS
-    Read a vendor descriptor and return the vendor it describes.
+    Find vendor descriptors and return the vendors they describe.
 
     .DESCRIPTION
     A descriptor (vendor.psd1) is data only: Name, Manufacturer (a regex), TargetModule, BuildModule and
     the Commands table that maps each contract operation to a command name. Module paths are relative
     to the descriptor folder, or rooted. A module path is $null when the file does not exist.
 
+    With no selector every vendor under the roots is returned. -Name and -Manufacturer pick one vendor
+    (-Manufacturer matches the laptop's manufacturer string against each descriptor's regex), and
+    -DescriptorPath reads one file. Two descriptors that declare the same Name make every scan throw
+    rather than letting one shadow the other, and so does a root with no descriptor at all.
+
+    .PARAMETER Name
+    Vendor name, compared case-insensitively.
+
+    .PARAMETER Manufacturer
+    A manufacturer string, for example the one WMI reports. Exactly one descriptor must match.
+
     .PARAMETER DescriptorPath
     Path of one vendor.psd1.
+
+    .PARAMETER VendorRoot
+    Folders searched recursively for vendor.psd1. Defaults to the vendors folder under the kit.
+
+    .EXAMPLE
+    Get-KitVendor -Manufacturer (Get-CimInstance Win32_ComputerSystem).Manufacturer
 
     .EXAMPLE
     Get-KitVendor -DescriptorPath .\vendors\contoso\vendor.psd1
@@ -107,13 +124,58 @@ function Get-KitVendor {
     .OUTPUTS
     Kit.Vendor
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'All')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][string]$DescriptorPath
+        [Parameter(Mandatory, ParameterSetName = 'ByName')][string]$Name,
+        [Parameter(Mandatory, ParameterSetName = 'ByManufacturer')][string]$Manufacturer,
+        [Parameter(Mandatory, ParameterSetName = 'ByPath')][string]$DescriptorPath,
+        [Parameter(ParameterSetName = 'All')]
+        [Parameter(ParameterSetName = 'ByName')]
+        [Parameter(ParameterSetName = 'ByManufacturer')]
+        [string[]]$VendorRoot = @(Join-Path -Path (Get-KitRoot) -ChildPath 'vendors')
     )
 
-    Read-KitVendorDescriptor -Path $DescriptorPath
+    if ($PSCmdlet.ParameterSetName -eq 'ByPath') {
+        return Read-KitVendorDescriptor -Path $DescriptorPath
+    }
+
+    $files = @(foreach ($root in $VendorRoot) {
+            if (Test-Path -LiteralPath $root -PathType Container) {
+                Get-ChildItem -LiteralPath $root -Filter 'vendor.psd1' -File -Recurse | Sort-Object -Property FullName
+            }
+        })
+    if ($files.Count -eq 0) {
+        throw "No vendor descriptors (vendor.psd1) under $($VendorRoot -join ', ')"
+    }
+    $vendors = @(foreach ($file in $files) { Read-KitVendorDescriptor -Path $file.FullName })
+
+    foreach ($group in ($vendors | Group-Object -Property Name)) {
+        if ($group.Count -gt 1) {
+            throw "Vendor '$($group.Name)' is declared by more than one descriptor: $(($group.Group | ForEach-Object { $_.DescriptorPath }) -join ', ')"
+        }
+    }
+
+    switch ($PSCmdlet.ParameterSetName) {
+        'ByName' {
+            $selected = @($vendors | Where-Object { $_.Name -ieq $Name })
+            $wanted = $Name
+        }
+        'ByManufacturer' {
+            $selected = @($vendors | Where-Object { $Manufacturer -match $_.Manufacturer })
+            $wanted = $Manufacturer
+        }
+        default {
+            return $vendors | Sort-Object -Property Name
+        }
+    }
+    if ($selected.Count -eq 0) {
+        throw "No vendor matches '$wanted'. Available: $(($vendors | ForEach-Object { $_.Name } | Sort-Object) -join ', ')"
+    }
+    if ($selected.Count -gt 1) {
+        throw "Vendor selection '$wanted' is ambiguous: it matches $(($selected | ForEach-Object { $_.Name }) -join ', ')"
+    }
+    $selected[0]
 }
 
 function Test-KitVendorContract {
@@ -212,4 +274,57 @@ function Test-KitVendorContract {
             if ($module) { Remove-Module -ModuleInfo $module -Force -ErrorAction SilentlyContinue }
         }
     }
+}
+
+function Invoke-KitVendorCommand {
+    <#
+    .SYNOPSIS
+    Run one contract operation through the vendor's mapped command.
+
+    .DESCRIPTION
+    Looks up the operation's plane in the contract table, imports that plane's module (an already loaded
+    copy is reused), and runs the command the vendor's Commands table maps the operation to. Callers stay
+    vendor-neutral: the vendor is a parameter. A Build operation needs the vendor's build module, which
+    the Tools stick does not carry, and throws when it is absent.
+
+    .PARAMETER Vendor
+    A Kit.Vendor from Get-KitVendor.
+
+    .PARAMETER Operation
+    One of the contract operations or helpers.
+
+    .PARAMETER Parameters
+    Parameters passed to the command by splatting.
+
+    .EXAMPLE
+    Invoke-KitVendorCommand -Vendor $vendor -Operation InstallFirmware -Parameters @{ PackagePath = 'D:\fw' }
+
+    .OUTPUTS
+    Whatever the vendor command returns.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][pscustomobject]$Vendor,
+        [Parameter(Mandatory)]
+        [ValidateSet('ListModels', 'GetVendorPack', 'NewCustomPack', 'GetFirmware', 'InstallDrivers', 'InstallFirmware', 'GetDeviceIdentity', 'GetInstalledFirmwareVersion')]
+        [string]$Operation,
+        [hashtable]$Parameters = @{}
+    )
+
+    $contract = Get-KitVendorContractTable
+    $entry = $contract | Where-Object { $_.Name -eq $Operation }
+    $modulePath = if ($entry.Plane -eq 'Build') { $Vendor.BuildModulePath } else { $Vendor.TargetModulePath }
+    if (-not $modulePath) {
+        throw "Vendor '$($Vendor.Name)' has no $($entry.Plane) module here. Build operations need the builder/ folder, which is not copied to the Tools stick."
+    }
+    if (-not $Vendor.Commands.ContainsKey($Operation)) {
+        throw "Vendor '$($Vendor.Name)' maps no command to the operation '$Operation'."
+    }
+    $commandName = [string]$Vendor.Commands[$Operation]
+    $module = Import-Module -Name $modulePath -Global -PassThru -ErrorAction Stop
+    if (-not $module.ExportedCommands.ContainsKey($commandName)) {
+        throw "Vendor '$($Vendor.Name)' maps $Operation to '$commandName', which $modulePath does not export."
+    }
+    $command = $module.ExportedCommands[$commandName]
+    & $command @Parameters
 }
