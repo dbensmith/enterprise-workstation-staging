@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Modular Foundation
 status: executing
-stopped_at: Completed 01-06-PLAN.md
-last_updated: "2026-10-19T01:30:17.968Z"
+stopped_at: Completed 01-07-PLAN.md
+last_updated: "2026-10-19T01:57:18.816Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 1 execution started
-state_head: 4294faefcc675898d2a00f72d003a8cca7cf79e8
+state_head: c2578258a4060e64727a77ad35570bc0e766340c
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 ## Current Position
 
 Phase: 1 (Modular Foundation) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-10-18 — Phase 1 execution started
 
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P04 | 25min | 3 tasks | 2 files |
 | Phase 01 P05 | 17min | 3 tasks | 8 files |
 | Phase 01 P06 | 23min | 3 tasks | 10 files |
+| Phase 1 P07 | 35min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-05: Get-KitConfig withholds config.local.psd1 parse-failure detail so no value is echoed (SEC-02)
 - [Phase 01]: Build ops take the staging root and compute their own package folder via Get-KitPackagePath; the second stage reuses the release the first resolved
 - [Phase 01]: Build script merges previous manifest ToolVersions so a single-stage rerun keeps the other stage's tool versions
+- [Phase 1]: 01-07: Stop-Transcript has no -WhatIf on 5.1; only Start-Transcript is called with -WhatIf:$false
+- [Phase 1]: 01-07: installer progress uses a host-writing Show- helper because 5.1 transcripts omit the information stream
 
 ### Pending Todos
 
@@ -105,6 +108,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T01:29:59.836Z
-Stopped at: Completed 01-06-PLAN.md
+Last session: 2026-10-19T01:57:18.766Z
+Stopped at: Completed 01-07-PLAN.md
 Resume file: None
