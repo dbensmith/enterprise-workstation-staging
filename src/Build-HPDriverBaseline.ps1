@@ -41,7 +41,7 @@ Requires admin (except with -WhatIf) and HPCMSL, which is installed from the Pow
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [ValidateScript({ Test-Path $_ -PathType Leaf })]
-    [string]$ProfilePath = (Join-Path $PSScriptRoot 'profiles\hp-elitebook-840-g6.psd1'),
+    [string]$ProfilePath = (Join-Path $PSScriptRoot '..\kit\profiles\hp\840-g6.psd1'),
 
     [string]$OutputRoot = 'C:\HP_Staging',
 
