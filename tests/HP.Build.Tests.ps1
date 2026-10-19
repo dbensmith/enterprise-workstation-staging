@@ -40,10 +40,10 @@ Describe 'HP.Build module' {
     It 'loads offline without importing HPCMSL' {
         Get-Module -Name HPCMSL | Should -BeNullOrEmpty
     }
-    It 'exports the four helpers and the four build operations' {
+    It 'exports the four helpers and the five build operations' {
         $names = (Get-Command -Module HP.Build).Name | Sort-Object
         $expected = @(
-            'ConvertTo-ReturnCodeMap', 'Get-HPKitModel', 'New-HPKitCustomPack', 'Save-HPKitFirmware'
+            'ConvertTo-ReturnCodeMap', 'Get-HPKitFirmwareStickLayout', 'Get-HPKitModel', 'New-HPKitCustomPack', 'Save-HPKitFirmware'
             'Save-HPKitVendorPack', 'Select-BaselineSoftpaq', 'Select-OsRelease', 'Split-SoftpaqCommand'
         ) | Sort-Object
         $names | Should -Be $expected
