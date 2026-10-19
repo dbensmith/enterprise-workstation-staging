@@ -91,3 +91,45 @@ Describe 'New-WindowsInstallIso' {
         { New-WindowsInstallIso -MediaPath $bare -Path (Join-Path $TestDrive 'bare.iso') } | Should -Throw '*Boot file missing*etfsboot.com'
     }
 }
+
+Describe 'Get-KitPackagePath' {
+    It 'returns the lowercase vendor, model and os-release folders under the output root' {
+        Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId 840-g6 -Os win11 -OsVer 24H2 |
+            Should -Be (Join-Path $TestDrive 'hp\840-g6\win11-24H2')
+    }
+    It 'keeps the 840-g5 and 840-g6 packages apart under one vendor folder' {
+        $g5 = Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId 840-g5 -Os win11 -OsVer 24H2
+        $g6 = Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId 840-g6 -Os win11 -OsVer 24H2
+        $g5 | Should -Not -Be $g6
+        Split-Path -Path (Split-Path -Path $g5 -Parent) -Parent | Should -Be (Split-Path -Path (Split-Path -Path $g6 -Parent) -Parent)
+        Split-Path -Path (Split-Path -Path $g5 -Parent) -Parent | Should -Be (Join-Path $TestDrive 'hp')
+    }
+    It 'lowercases the vendor and keeps the case of the other segments' {
+        $path = Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId EliteBook-840G6 -Os Win11 -OsVer 24H2
+        $path | Should -BeExactly (Join-Path $TestDrive 'hp\EliteBook-840G6\Win11-24H2')
+    }
+    It 'creates nothing on disk' {
+        $path = Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId 840-g6 -Os win11 -OsVer 24H2
+        Test-Path -LiteralPath $path | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $TestDrive 'hp') | Should -BeFalse
+    }
+    It 'rejects the ModelId <ModelId>' -ForEach @(
+        @{ ModelId = '' }
+        @{ ModelId = '..' }
+        @{ ModelId = 'a\b' }
+        @{ ModelId = 'a/b' }
+        @{ ModelId = '.hidden' }
+    ) {
+        { Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId $ModelId -Os win11 -OsVer 24H2 } | Should -Throw
+    }
+    It 'rejects an empty OsVer' {
+        { Get-KitPackagePath -OutputRoot $TestDrive -Vendor HP -ModelId 840-g6 -Os win11 -OsVer '' } | Should -Throw
+    }
+}
+
+Describe 'Get-KitRoot' {
+    It 'returns the kit folder, the parent of kit/core' {
+        $expected = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\kit')).Path
+        Get-KitRoot | Should -Be $expected
+    }
+}
