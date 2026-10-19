@@ -7,18 +7,18 @@
 
 ### Repo & Vendor Interface
 
-- [ ] **REPO-01**: Shared, vendor-neutral code lives in one common module; vendor code lives in per-vendor modules
-- [ ] **REPO-02**: Each vendor module implements one interface: list models, fetch vendor pack, build custom pack, fetch firmware, install drivers, install firmware
-- [ ] **REPO-03**: Pester contract tests check that a vendor module implements the full interface
-- [ ] **REPO-04**: Build outputs are written to separate folders per vendor and model
-- [ ] **REPO-05**: Per-model profiles (`.psd1`) exist for 840 G5 and 840 G6 and carry platform ID, expected BIOS defaults, firmware minimum and pack selection data
-- [ ] **REPO-06**: Existing Pester tests run under Pester 5+ on Windows PowerShell 5.1, and PSScriptAnalyzer runs clean without suppressions
+- [x] **REPO-01**: Shared, vendor-neutral code lives in one common module; vendor code lives in per-vendor modules
+- [x] **REPO-02**: Each vendor module implements one interface: list models, fetch vendor pack, build custom pack, fetch firmware, install drivers, install firmware
+- [x] **REPO-03**: Pester contract tests check that a vendor module implements the full interface
+- [x] **REPO-04**: Build outputs are written to separate folders per vendor and model
+- [x] **REPO-05**: Per-model profiles (`.psd1`) exist for 840 G5 and 840 G6 and carry platform ID, expected BIOS defaults, firmware minimum and pack selection data
+- [x] **REPO-06**: Existing Pester tests run under Pester 5+ on Windows PowerShell 5.1, and PSScriptAnalyzer runs clean without suppressions
 
 ### Secrets
 
-- [ ] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (third-party installer links, MSI properties, tokens)
-- [ ] **SEC-02**: Operator supplies secrets at run time via a gitignored local config, the Tools stick, or parameters; a committed `.example` config documents the schema
-- [ ] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
+- [x] **SEC-01**: Repo and its history contain no credentials or customer-specific settings (third-party installer links, MSI properties, tokens)
+- [x] **SEC-02**: Operator supplies secrets at run time via a gitignored local config, the Tools stick, or parameters; a committed `.example` config documents the schema
+- [x] **SEC-03**: A secret scan (gitleaks) runs as a pre-commit hook or CI check
 
 ### Build
 
@@ -127,15 +127,15 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REPO-01 | Phase 1 | Pending |
-| REPO-02 | Phase 1 | Pending |
-| REPO-03 | Phase 1 | Pending |
-| REPO-04 | Phase 1 | Pending |
-| REPO-05 | Phase 1 | Pending |
-| REPO-06 | Phase 1 | Pending |
-| SEC-01 | Phase 1 | Pending |
-| SEC-02 | Phase 1 | Pending |
-| SEC-03 | Phase 1 | Pending |
+| REPO-01 | Phase 1 | Complete |
+| REPO-02 | Phase 1 | Complete |
+| REPO-03 | Phase 1 | Complete |
+| REPO-04 | Phase 1 | Complete |
+| REPO-05 | Phase 1 | Complete |
+| REPO-06 | Phase 1 | Complete |
+| SEC-01 | Phase 1 | Complete |
+| SEC-02 | Phase 1 | Complete |
+| SEC-03 | Phase 1 | Complete |
 | BUILD-01 | Phase 2 | Pending |
 | BUILD-02 | Phase 4 | Pending |
 | BUILD-03 | Phase 4 | Pending |

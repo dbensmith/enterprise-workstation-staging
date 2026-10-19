@@ -1,0 +1,29 @@
+{
+  "SchemaVersion": 2,
+  "Profile": "Fixture package with a missing firmware executable",
+  "Vendor": "HP",
+  "ModelId": "840-g6",
+  "Platform": "0000",
+  "Os": "win11",
+  "OsVer": "24H2",
+  "BuiltUtc": "2026-10-19T00:00:00Z",
+  "Drivers": [],
+  "Firmware": [
+    {
+      "Id": "sp000001",
+      "Name": "Fixture firmware",
+      "Version": "1.0.0",
+      "Category": "Firmware",
+      "AutoInstall": true,
+      "RebootRequired": false,
+      "Devices": [],
+      "Path": "Firmware/sp000001",
+      "SilentInstall": {
+        "File": "missing.exe",
+        "Arguments": "-s"
+      },
+      "ReturnCodes": {}
+    }
+  ],
+  "Excluded": []
+}

@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Modular Foundation
-status: executing
-stopped_at: Completed 1-01-PLAN.md
-last_updated: "2026-10-18T14:01:54.966Z"
+status: verifying
+stopped_at: Completed 01-07-PLAN.md
+last_updated: "2026-10-19T10:45:22.690Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 1 execution started
-state_head: e0d80760add219e03316c7065fd2f637f1eb3995
+state_head: fc7dde1d0b607608a2e080195179d6d6f205ee36
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 1
+  completed_plans: 8
   percent: 0
 ---
 
@@ -28,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 ## Current Position
 
 Phase: 1 (Modular Foundation) — EXECUTING
-Plan: 2 of 8
-Status: Ready to execute
+Plan: 8 of 8
+Status: Phase complete — ready for verification
 Last activity: 2026-10-18 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -57,6 +57,11 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 1 P01 | 20min | 3 tasks | 12 files |
+| Phase 1 P03 | 18min | 3 tasks | 9 files |
+| Phase 01 P04 | 25min | 3 tasks | 2 files |
+| Phase 01 P05 | 17min | 3 tasks | 8 files |
+| Phase 01 P06 | 23min | 3 tasks | 10 files |
+| Phase 1 P07 | 35min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -69,6 +74,15 @@ Recent decisions affecting current work:
 - [Roadmap]: Firmware staging (the 2026-10-05 incident fix) comes right after the foundation, before Assess and imaging
 - [Roadmap]: IMG-05 (blank `User` password) sits in Phase 5 with first logon, because the second-logon outcome depends on the first-logon account steps and the autologon cleanup
 - [Roadmap]: IMG-09 (combined image) is in Phase 7, after the per-model images (Phase 4) and platform-ID driver selection (Phase 5) are proven
+- [Phase 1]: [01-03] Vendor descriptors and contract table are data-only (Import-PowerShellDataFile); UnknownOperation counts as a descriptor-level contract failure
+- [Phase 01]: 01-04: Install-HPKitDriver calls ShouldProcess and still passes -WhatIf to Invoke-KitTool so a dry run prints the real command
+- [Phase 01]: 01-04: firmware items ordered non-BIOS then BIOS by partition, not Sort-Object (stable on 5.1)
+- [Phase 01]: 01-05: core Profile.ps1 names no vendor; FirmwareMinimum required keys are Version/Verified/Source, SoftPaq passes through the guard
+- [Phase 01]: 01-05: Get-KitConfig withholds config.local.psd1 parse-failure detail so no value is echoed (SEC-02)
+- [Phase 01]: Build ops take the staging root and compute their own package folder via Get-KitPackagePath; the second stage reuses the release the first resolved
+- [Phase 01]: Build script merges previous manifest ToolVersions so a single-stage rerun keeps the other stage's tool versions
+- [Phase 1]: 01-07: Stop-Transcript has no -WhatIf on 5.1; only Start-Transcript is called with -WhatIf:$false
+- [Phase 1]: 01-07: installer progress uses a host-writing Show- helper because 5.1 transcripts omit the information stream
 
 ### Pending Todos
 
@@ -94,6 +108,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-18T14:01:54.938Z
-Stopped at: Completed 1-01-PLAN.md
+Last session: 2026-10-19T01:57:18.766Z
+Stopped at: Completed 01-07-PLAN.md
 Resume file: None

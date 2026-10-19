@@ -1,6 +1,6 @@
 ---
 title: HP EliteBook 840 G6 Driver & Firmware Baseline SOP
-description: Build and apply a repeatable HP EliteBook 840 G6 (platform 8549) Windows 11 driver and BIOS baseline with HPCMSL. Covers the build script, online (pnputil + silent BIOS flash) and offline (DISM) apply modes, building a driver-preloaded install ISO with New-HPBaselineIso.ps1, why Win11 25H2/26H2 use the 24H2 catalog, per-model profiles, and bugs fixed in the earlier ad-hoc script.
+description: Build and apply a repeatable HP EliteBook 840 G6 (platform 8549) Windows 11 driver and BIOS baseline with HPCMSL. Covers Build.cmd, online (pnputil + silent BIOS flash) and offline (DISM) apply modes through kit\Install-DriverBaseline.ps1, building a driver-preloaded install ISO with builder\iso\New-BaselineIso.ps1 and its C:\Kit first-boot run, why Win11 25H2/26H2 use the 24H2 catalog, per-model profiles, and bugs fixed in the earlier ad-hoc script.
 aliases:
   - HP EliteBook 840 G6 Driver & Firmware Baseline SOP
 tags:
@@ -11,7 +11,7 @@ type: How-to guide
 audience: technical
 created: "2026-09-28T12:51:15+08:00"
 linter-yaml-title-alias: HP EliteBook 840 G6 Driver & Firmware Baseline SOP
-updated: "2026-09-28T17:31:44+08:00"
+updated: "2026-10-19T00:00:00+08:00"
 ---
 # HP EliteBook 840 G6 Driver & Firmware Baseline SOP
 
@@ -19,7 +19,7 @@ updated: "2026-09-28T17:31:44+08:00"
 
 One folder brings every EliteBook 840 G6 to the same known-good state. It holds the right hardware drivers and the latest BIOS, so Wi-Fi, audio, the webcam, the fingerprint reader and the touchpad all work after a fresh Windows install without hunting for downloads. Build the folder once, copy it to a USB stick, and run one command on each laptop. Rebuild it whenever HP publishes updates.
 
-Technically: [`scripts/hp-driver-baseline/`](../scripts/hp-driver-baseline/) uses the HP Client Management Script Library (HPCMSL) to query HP's SoftPaq catalog for platform `8549`. It extracts drivers into INF folders and stages signature-checked firmware SoftPaqs. It writes a `manifest.json` recording exactly what was included, what was excluded and why, and how to install each firmware item silently.
+Technically: `Build.cmd` starts [`builder/Build-DriverBaseline.ps1`](../builder/Build-DriverBaseline.ps1), which runs the HP steps in [`builder/vendors/hp/HP.Build.psm1`](../builder/vendors/hp/HP.Build.psm1). They use the HP Client Management Script Library (HPCMSL) to query HP's SoftPaq catalog for platform `8549`. The build extracts drivers into INF folders and stages signature-checked firmware SoftPaqs. It writes a `manifest.json` recording exactly what was included, what was excluded and why, and how to install each firmware item silently. The laptop side is [`kit/Install-DriverBaseline.ps1`](../kit/Install-DriverBaseline.ps1), which needs no HPCMSL.
 
 ## Package layout
 
@@ -28,27 +28,26 @@ Technically: [`scripts/hp-driver-baseline/`](../scripts/hp-driver-baseline/) use
 | `Drivers/` | INF/SYS/CAT driver folders from `New-HPBuildDriverPack` (DISM- and pnputil-ready) |
 | `Firmware/spNNNNNN/` | SoftPaq `.exe` plus extracted payload (e.g. `HpFirmwareUpdRec.exe` for BIOS) |
 | `manifest.json` | Platform, catalog OS release, HPCMSL version, included/excluded SoftPaqs, firmware silent commands + return codes |
-| `Install-HPDriverBaseline.ps1` | Standalone applier (no HPCMSL needed on target) |
 
-Package folder name: `<OutputRoot>\<Platform>-<os>-<release>`, e.g. `C:\HP_Staging\8549-win11-24H2`.
+A package holds data only. The installer is not copied into it: the one copy is `kit\Install-DriverBaseline.ps1`, and you pass the package to it with `-PackagePath`.
+
+Package folder name: `staging\<vendor>\<model>\<os>-<release>`, e.g. `staging\hp\840-g6\win11-24H2`. The `staging\` folder is git-ignored.
 
 ## Build the package
 
-Prerequisite: HPCMSL. The script installs it from the PowerShell Gallery if it is missing. PowerShell 7 is preferred; on Windows PowerShell 5.1 the script also forces TLS 1.2 and installs the NuGet provider.
+Prerequisite: HPCMSL. The build installs it from the PowerShell Gallery if it is missing. Windows PowerShell 5.1 is the only supported host; the build forces TLS 1.2 and installs the NuGet provider.
 
-From an **elevated** PowerShell session (driver pack building and SoftPaq extraction both require admin):
+From an **elevated** Command Prompt at the repo root (driver pack building and SoftPaq extraction both require admin):
 
-```powershell
-cd scripts\hp-driver-baseline
+```text
+rem Preview the selection without downloading (works unelevated)
+Build.cmd -Vendor HP -Model 840-g6 -WhatIf
 
-# Preview the selection without downloading (works unelevated)
-.\Build-HPDriverBaseline.ps1 -WhatIf
+rem Build to staging\hp\840-g6\win11-<release>
+Build.cmd -Vendor HP -Model 840-g6
 
-# Build to C:\HP_Staging\8549-win11-<release>
-.\Build-HPDriverBaseline.ps1
-
-# Refresh only one stage; the manifest keeps the other stage's entries
-.\Build-HPDriverBaseline.ps1 -Stage Firmware
+rem Refresh only one stage; the manifest keeps the other stage's entries
+Build.cmd -Vendor HP -Model 840-g6 -Stage Firmware
 ```
 
 Re-running is idempotent: each stage's folder is emptied first, so SoftPaqs HP has superseded don't linger.
@@ -62,13 +61,13 @@ Dry run on 2026-09-28 against the 24H2 catalog: 21 drivers, BIOS `sp174025` (R70
 
 ## Apply the package
 
-Both modes need an elevated session on the machine running them.
+Both modes need an elevated session on the machine running them. From the Tools stick, `Run.cmd -Mode Install -PackagePath <package>` runs the same installer and asks for elevation by itself.
 
 ### Online: running 840 G6
 
 ```powershell
-.\Install-HPDriverBaseline.ps1 -WhatIf   # show every step
-.\Install-HPDriverBaseline.ps1           # then reboot
+kit\Install-DriverBaseline.ps1 -PackagePath staging\hp\840-g6\win11-24H2 -WhatIf   # show every step
+kit\Install-DriverBaseline.ps1 -PackagePath staging\hp\840-g6\win11-24H2           # then reboot
 ```
 
 1. Refuses to run unless the board's platform ID (`Win32_BaseBoard.Product`) is `8549` (`-Force` overrides).
@@ -81,7 +80,7 @@ Both modes need an elevated session on the machine running them.
    - If the version can't be determined, it **runs HP's updater** and lets it decide (it exits `282` on the same version). Unknown state never skips an update.
    - Warns about firmware that is applicable but manual-only (no silent install).
    - Runs the rest with HP's CVA silent command and reports the exit code using HP's own return-code text (`3010` = success, reboot to flash).
-4. Exits `1` if any step failed. `-LogPath <file>` writes a transcript.
+4. Exits `1` if any step failed. `-LogPath <file>` writes a transcript, even when the run fails.
 
 Use `-SkipFirmware` for a drivers-only pass.
 
@@ -98,9 +97,9 @@ It deliberately omits the Microsoft Store companion apps that some drivers pair 
 
 ### Offline: Windows image
 
-```powershell
+```text
 dism /Mount-Image /ImageFile:D:\sources\install.wim /Index:1 /MountDir:C:\Mount\install
-.\Install-HPDriverBaseline.ps1 -ImagePath C:\Mount\install
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File kit\Install-DriverBaseline.ps1 -PackagePath staging\hp\840-g6\win11-24H2 -OfflineImagePath C:\Mount\install
 dism /Unmount-Image /MountDir:C:\Mount\install /Commit
 ```
 
@@ -108,21 +107,26 @@ This runs `dism /Add-Driver /Recurse` only. Firmware cannot be serviced offline,
 
 ## Build a pre-loaded install ISO
 
-`New-HPBaselineIso.ps1` wraps the offline mode into a finished, bootable ISO. Windows installs with every 840 G6 driver already in place, with no post-install driver step. It needs an elevated session (DISM image servicing) and **nothing to install**. The ISO is written with IMAPI2, the disc-image engine built into Windows, so the Windows ADK / `oscdimg.exe` is not required.
+`builder\iso\New-BaselineIso.ps1` wraps the offline mode into a finished, bootable ISO. Windows installs with every 840 G6 driver already in place, with no post-install driver step. It needs an elevated session (DISM image servicing) and **nothing to install**. The ISO is written with IMAPI2, the disc-image engine built into Windows, so the Windows ADK / `oscdimg.exe` is not required.
 
-```powershell
-cd scripts\hp-driver-baseline
-$iso = 'D:\Sources\26300.9457.260913-0631.26H2_GE_RELEASE_SVC_IM_CLIENTPRO_OEMRET_X64FRE_EN-US.ISO'
+The script is vendor-neutral. `-PackagePath` is required and names the package folder from `Build.cmd`. A package built before the kit layout (a manifest without `SchemaVersion` 2) is refused with a message to rebuild it.
 
-.\New-HPBaselineIso.ps1 -IsoPath $iso -WhatIf   # resolve edition + build, copy nothing
-.\New-HPBaselineIso.ps1 -IsoPath $iso           # -> C:\HP_Staging\<iso name>_HP8549.iso
+```text
+set ISO=D:\Sources\26300.9457.260913-0631.26H2_GE_RELEASE_SVC_IM_CLIENTPRO_OEMRET_X64FRE_EN-US.ISO
+set PKG=staging\hp\840-g6\win11-24H2
+
+rem Resolve edition + build, copy nothing
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder\iso\New-BaselineIso.ps1 -IsoPath %ISO% -PackagePath %PKG% -WhatIf
+
+rem Output: staging\hp\840-g6\<iso name>_hp-840-g6.iso
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder\iso\New-BaselineIso.ps1 -IsoPath %ISO% -PackagePath %PKG%
 ```
 
 What it does:
 
 1. Mounts the ISO read-only and picks the image in `install.wim`/`.esd`. This source ISO is **Pro-only** (one image, Windows 11 Pro 26300.9457), so no `-Edition` is needed. Multi-edition media requires `-Edition '<exact name>'`; a missing or wrong name fails in seconds and lists the available editions.
-2. Copies the media to `-WorkRoot` (default `C:\HP_Staging\IsoBuild`). A `.wim` is serviced in place. An `.esd` is first converted to WIM, because DISM can't service ESD.
-3. Mounts the image and runs the package's own `Install-HPDriverBaseline.ps1 -ImagePath`. That's the same code path as the manual offline mode above. Unless `-NoFirstBoot`, it also sets up the first-boot run (next section).
+2. Copies the media to `-WorkRoot` (default `staging\_isobuild` in the repo). A `.wim` is serviced in place. An `.esd` is first converted to WIM, because DISM can't service ESD.
+3. Mounts the image and runs `kit\Install-DriverBaseline.ps1 -PackagePath <package> -OfflineImagePath <mount>`. That's the same code path as the manual offline mode above. Unless `-NoFirstBoot`, it also sets up the first-boot run (next section).
 4. Commits, then does a single export into `sources\install.wim`. The export keeps only the chosen edition and drops the orphaned data a WIM commit leaves behind.
 5. With `-BootDriver sp144910`, it also adds Intel RST to `boot.wim` index 2 (Windows Setup). Only needed for units whose disk is in RAID mode; AHCI units boot Setup with in-box drivers.
 6. Builds a UEFI + legacy BIOS bootable UDF ISO. It keeps the source volume label and the ISO's own `efisys.bin`, which shows the "Press any key to boot from CD" prompt.
@@ -134,11 +138,11 @@ Safety: every image mount is discarded if a step fails, so no stale mounts are l
 
 Laptops installed from the ISO bring their own firmware up to baseline, with no one running a script. While the image is mounted, the ISO build does two things:
 
-1. Copies `manifest.json`, `Install-HPDriverBaseline.ps1` and `Firmware\` to `C:\HP\Baseline` in the image. Drivers are already injected, so they are not copied.
+1. Copies the publishable kit files to `C:\Kit` in the image, and the package's `manifest.json` and `Firmware\` folder to `C:\Kit\package`. Drivers are already injected, so they are not copied. The kit's local settings file (`config.local.psd1`) and any `results` folder are never copied: the list of files comes from `Get-KitPublishFile`, which leaves them out.
 2. Writes `Windows\Panther\unattend.xml` with a single **specialize-pass** `RunSynchronous` command. Microsoft documents this as the way to embed an answer file in an offline image. The command runs:
 
    ```text
-   powershell.exe -ExecutionPolicy Bypass -File %SystemDrive%\HP\Baseline\Install-HPDriverBaseline.ps1 -LogPath %SystemDrive%\HP\Baseline\firstboot.log
+   cmd.exe /c powershell.exe -NoProfile -ExecutionPolicy Bypass -File %SystemDrive%\Kit\Install-DriverBaseline.ps1 -PackagePath %SystemDrive%\Kit\package -LogPath %SystemDrive%\Kit\firstboot.log
    ```
 
 During Setup, after the image is applied and before OOBE (the region/account screens), the installer runs once as SYSTEM:
@@ -147,11 +151,11 @@ During Setup, after the image is applied and before OOBE (the region/account scr
 - it reports any devices still missing a driver;
 - it runs out-of-date firmware. The BIOS flash is staged and applies on Setup's next reboot.
 
-It runs under the image's built-in Windows PowerShell 5.1; every script is parse-checked under 5.1 by the test suite.
+It runs under the image's built-in Windows PowerShell 5.1; every script is parse-checked under 5.1 by the test suite. The test suite also checks that every parameter in the answer-file command exists on the installer and that every mandatory one is supplied.
 
 Why not the usual `SetupComplete.cmd`: Microsoft says it "is disabled when using OEM product keys, except on Enterprise editions". Every 840 G6 has an OEM Windows Pro key in its firmware, so it would silently never run. An answer-file command has no such restriction.
 
-After install, check **`C:\HP\Baseline\firstboot.log`**. It records the driver report and every firmware decision (CURRENT / MANUAL / OK / FAIL). On a non-8549 PC the platform check stops it, and that is logged too.
+After install, check **`C:\Kit\firstboot.log`**. It records the driver report and every firmware decision (CURRENT / MANUAL / OK / FAIL). On a non-8549 PC the platform check stops it, and that is logged too.
 
 Limits:
 
@@ -162,7 +166,7 @@ Limits:
 
 ### ISO writer verification
 
-`New-WindowsInstallIso` (in `HPDriverBaseline.psm1`) was verified on 2026-09-28 by rebuilding this source ISO's unmodified media. It did not boot the result in a VM or on hardware.
+`New-WindowsInstallIso` (in `kit/core/IsoServicing.ps1`, part of the `Kit.Core` module) was verified on 2026-09-28 by rebuilding this source ISO's unmodified media. It did not boot the result in a VM or on hardware.
 
 - **Boot catalog:** byte-identical to Microsoft's. There is a BIOS entry (no emulation, 8-sector `etfsboot.com`) and a final UEFI section (platform `0xEF`, 1-sector load of `efisys.bin`). IMAPI2 writes the UEFI load size as 2880 sectors, so the helper patches it to Microsoft's value of 1.
 - **Contents:** all 968 files match by path and size, on a UDF volume with the original label.
@@ -171,7 +175,7 @@ Limits:
 
 Two IMAPI2 constraints the helper handles:
 
-- **Path length:** IMAPI2 uses legacy Win32 paths (260-character limit), and Windows media nests about 150 characters deep (`sources\replacementmanifests\…`). Keep `-WorkRoot` short. The default is fine, and a long root fails fast with a clear error rather than IMAPI2's bare "path not found".
+- **Path length:** IMAPI2 uses legacy Win32 paths (260-character limit), and Windows media nests about 150 characters deep (`sources\replacementmanifests\…`). Keep the repo folder path short, or pass a short `-WorkRoot`. A long root fails fast with a clear error rather than IMAPI2's bare "path not found".
 - **File handles:** IMAPI2's COM objects hold file handles. The helper closes and releases them before returning; otherwise the work folder can't be deleted.
 
 > [!NOTE]
@@ -183,14 +187,14 @@ Two IMAPI2 constraints the helper handles:
 
 Drivers built for 24H2 install on 25H2 (26200), which shares the 26100 servicing branch. The 26H2 ISO in use (build **26300**) is labelled `GE_RELEASE`, the same Germanium platform as 24H2, so the same DCH drivers are expected to apply.
 
-`New-HPBaselineIso.ps1` prints the image build next to the catalog release so the gap stays visible. After the first install, check Device Manager for unknown devices before rolling it to more units.
+`builder\iso\New-BaselineIso.ps1` prints the image build next to the catalog release so the gap stays visible. After the first install, check Device Manager for unknown devices before rolling it to more units.
 
 ## Adding another model
 
-Copy `profiles/hp-elitebook-840-g6.psd1`, set `Name`, `Platform` (from `Get-HPDeviceDetails -Name '*model*'`), `Os` and the exclude lists, then:
+Copy `kit\profiles\hp\840-g6.psd1` to `kit\profiles\hp\<model-id>.psd1`. Set `ModelId` to the file name (without `.psd1`), then set `Name`, `Platform` (from `Get-HPDeviceDetails -Name '*model*'`), `BiosFamily`, `Os` and the exclude lists. Values you have not confirmed on hardware keep `Verified = $false`. Then build with the new id:
 
-```powershell
-.\Build-HPDriverBaseline.ps1 -ProfilePath .\profiles\<model>.psd1
+```text
+Build.cmd -Vendor HP -Model <model-id>
 ```
 
 Exclude entries match a SoftPaq id exactly (`sp152918`) or a name substring (`AMD Video`), the same semantics as HPCMSL's `-UnselectList`.
@@ -200,12 +204,11 @@ Exclude entries match a SoftPaq id exactly (`sp152918`) or a name substring (`AM
 
 ## Tests
 
-```powershell
-Invoke-Pester scripts\hp-driver-baseline
-Invoke-ScriptAnalyzer -Path scripts\hp-driver-baseline -Recurse
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File Test-Kit.ps1
 ```
 
-Pester covers OS-release resolution, include/exclude selection, CVA command parsing and return-code mapping, with fixtures taken from live platform `8549` catalog data. PSScriptAnalyzer reports no findings.
+`Test-Kit.ps1` runs the secret scan, PSScriptAnalyzer (no findings, nothing suppressed) and the Pester suites. Pester covers OS-release resolution, include/exclude selection, CVA command parsing and return-code mapping, with fixtures taken from live platform `8549` catalog data. It also covers the installer, the ISO first-boot staging and the answer-file binding.
 
 ## Review of the earlier ad-hoc script
 

@@ -446,12 +446,28 @@ function Invoke-GateTest {
         $config.TestResult.OutputPath = $resultFile
     }
 
+    # A git hook runs with GIT_DIR, GIT_INDEX_FILE and similar variables pointing at this repo. The tests run git
+    # against throwaway repos and by path, so left in place those variables redirect every call to this repo:
+    # a test's `git init` and `git config` then rewrite this repo's own shared config. Clear them for the run.
+    $gitLocationVariable = 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_QUARANTINE_PATH', 'GIT_NAMESPACE'
+    $savedGitLocation = @{}
+    foreach ($variable in $gitLocationVariable) {
+        $value = [Environment]::GetEnvironmentVariable($variable)
+        if ($null -ne $value) {
+            $savedGitLocation[$variable] = $value
+            [Environment]::SetEnvironmentVariable($variable, $null)
+        }
+    }
     $env:KIT_GATE_ACTIVE = '1'
     try {
         $result = Invoke-Pester -Configuration $config
     }
     finally {
         Remove-Item -Path Env:\KIT_GATE_ACTIVE -ErrorAction SilentlyContinue
+        foreach ($variable in $savedGitLocation.Keys) {
+            [Environment]::SetEnvironmentVariable($variable, $savedGitLocation[$variable])
+        }
     }
 
     if ($null -eq $result) {

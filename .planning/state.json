@@ -1,0 +1,48 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "Modular Foundation",
+      "status": "in_progress"
+    },
+    {
+      "number": "2",
+      "name": "Tools Stick Firmware Staging",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Read-Only Assess",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Per-Model Image and Install Stick",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Deploy and First Logon",
+      "status": "pending"
+    },
+    {
+      "number": "6",
+      "name": "Verify",
+      "status": "pending"
+    },
+    {
+      "number": "7",
+      "name": "Web Bootstrap and Combined Image",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step (verify)",
+    "reason": "Phase 1 of 7 · 0% · ready to verify"
+  },
+  "updated_at": "2026-10-19T10:45:22.921Z"
+}
