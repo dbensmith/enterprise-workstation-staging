@@ -133,3 +133,62 @@ Describe 'Get-KitRoot' {
         Get-KitRoot | Should -Be $expected
     }
 }
+
+Describe 'Native command wrapper' {
+    Context 'ConvertTo-KitCommandLine' {
+        It 'escapes <Name>' -ForEach @(
+            @{ Name = 'plain arguments unchanged'; Arguments = @('/add-driver', 'C:\d\*.inf', '/subdirs'); Expected = '/add-driver C:\d\*.inf /subdirs' }
+            @{ Name = 'an empty argument as two quotes'; Arguments = @(''); Expected = '""' }
+            @{ Name = 'a value with a space by quoting it'; Arguments = @('C:\Program Files\x'); Expected = '"C:\Program Files\x"' }
+            @{ Name = 'a trailing backslash by doubling it'; Arguments = @('C:\dir with space\'); Expected = '"C:\dir with space\\"' }
+            @{ Name = 'embedded quotes with a backslash'; Arguments = @('say "hi"'); Expected = '"say \"hi\""' }
+            @{ Name = 'a backslash before a quote by doubling it'; Arguments = @('a\"b c'); Expected = '"a\\\"b c"' }
+        ) {
+            ConvertTo-KitCommandLine -ArgumentList $Arguments | Should -BeExactly $Expected
+        }
+        It 'returns an empty string for no arguments' {
+            ConvertTo-KitCommandLine -ArgumentList @() | Should -BeExactly ''
+        }
+    }
+
+    Context 'Invoke-KitTool' {
+        It 'returns without a warning for exit 0' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 0 }'))
+            Invoke-KitTool -FilePath 'tool.exe' -WarningVariable warned -WarningAction SilentlyContinue
+            $warned | Should -BeNullOrEmpty
+        }
+        It 'warns once and does not throw for the accepted exit 3010' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 3010 }'))
+            Invoke-KitTool -FilePath 'tool.exe' -WarningVariable warned -WarningAction SilentlyContinue
+            @($warned).Count | Should -Be 1
+            $warned[0].Message | Should -BeLike '*exit 3010 (accepted)*'
+        }
+        It 'throws for an exit code outside OkCode' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 5 }'))
+            { Invoke-KitTool -FilePath 'tool.exe' } | Should -Throw '*failed: exit 5*'
+        }
+        It 'honours a custom OkCode list' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 259 }'))
+            Invoke-KitTool -FilePath 'tool.exe' -OkCode 0, 259 -WarningVariable warned -WarningAction SilentlyContinue
+            @($warned).Count | Should -Be 1
+            $warned[0].Message | Should -BeLike '*exit 259 (accepted)*'
+        }
+        It 'passes the escaped command line as ArgumentList' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 0 }'))
+            Invoke-KitTool 'dism.exe' '/add-driver', 'C:\my drivers\*.inf'
+            Should -Invoke Start-Process -ModuleName Kit.Core -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq 'dism.exe' -and $ArgumentList -ceq '/add-driver "C:\my drivers\*.inf"'
+            }
+        }
+        It 'omits ArgumentList when there are no arguments' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 0 }'))
+            Invoke-KitTool 'tool.exe'
+            Should -Invoke Start-Process -ModuleName Kit.Core -Times 1 -Exactly -ParameterFilter { $null -eq $ArgumentList }
+        }
+        It 'starts no process under -WhatIf' {
+            Mock Start-Process -ModuleName Kit.Core -MockWith ([scriptblock]::Create('[pscustomobject]@{ ExitCode = 0 }'))
+            Invoke-KitTool 'tool.exe' '/x' -WhatIf
+            Should -Invoke Start-Process -ModuleName Kit.Core -Times 0 -Exactly
+        }
+    }
+}
