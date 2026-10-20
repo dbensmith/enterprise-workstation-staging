@@ -159,3 +159,209 @@ Describe 'Build-ToolsStick script shape' {
         $operations | Should -Contain 'GetFirmwareStickLayout'
     }
 }
+
+Describe 'Build-ToolsStick two models with the diagnostics capture' {
+    BeforeAll {
+        $script:ws = New-TestWorkspace
+        $parameter = Get-MasterBase -Workspace $script:ws
+        $parameter.Model = @('m1', 'm2')
+        $parameter.DiagnosticsSource = $script:ws.Capture
+        $parameter.NewDiagnosticsSnapshot = $true
+        $script:first = Invoke-Master -Parameter $parameter
+        $script:manifest = Read-StickManifest -Stick $script:ws.Stick
+    }
+
+    It 'records the snapshot next to the layout and stages a READY stick' {
+        $script:first.ExitCode | Should -Be 0 -Because $script:first.Output
+        (Join-Path (Split-Path $script:ws.Layout -Parent) 'fx-diag.snapshot.psd1') | Should -Exist
+        (Join-Path $script:ws.Stick 'READY') | Should -Exist
+    }
+    It 'keeps both BIOS images in both folders without one overwriting the other (FW-01)' {
+        foreach ($folder in 'New', 'Current') {
+            $one = Join-Path $script:ws.Stick "Vendor\BIOS\$folder\F00_000100.bin"
+            $two = Join-Path $script:ws.Stick "Vendor\BIOS\$folder\F01_000100.bin"
+            $one | Should -Exist
+            $two | Should -Exist
+            (Get-FileHash -LiteralPath $one).Hash | Should -Not -Be (Get-FileHash -LiteralPath $two).Hash
+        }
+    }
+    It 'stages the Windows fallback folders of both platforms and leaves the flash-image folder out' {
+        @(Get-ChildItem -LiteralPath (Join-Path $script:ws.Stick 'firmware\fx\0000') -File).Count | Should -BeGreaterThan 0
+        @(Get-ChildItem -LiteralPath (Join-Path $script:ws.Stick 'firmware\fx\0001') -File).Count | Should -BeGreaterThan 0
+        (Join-Path $script:ws.Stick 'FX\DEVFW') | Should -Not -Exist
+    }
+    It 'stages the three captured files (FW-05) and lists both models and three shared records (FW-02)' {
+        (Join-Path $script:ws.Stick 'EFI\FX\a.efi') | Should -Exist
+        (Join-Path $script:ws.Stick 'EFI\FX\sub\b.dll') | Should -Exist
+        (Join-Path $script:ws.Stick 'EFI\FX\c.json') | Should -Exist
+        @($script:manifest.models | ForEach-Object { $_.modelId }) | Should -Be @('m1', 'm2')
+        @($script:manifest.shared).Count | Should -Be 3
+    }
+    It 'is READY again on a second run from the recorded snapshot and changes no staged file' {
+        $before = @{}
+        foreach ($file in Get-ChildItem -LiteralPath $script:ws.Stick -Recurse -File) {
+            $before[$file.FullName] = $file.LastWriteTimeUtc.Ticks
+        }
+        $parameter = Get-MasterBase -Workspace $script:ws
+        $parameter.Model = @('m1', 'm2')
+        $parameter.DiagnosticsSource = $script:ws.Capture
+        $second = Invoke-Master -Parameter $parameter
+        $second.ExitCode | Should -Be 0 -Because $second.Output
+        foreach ($file in Get-ChildItem -LiteralPath $script:ws.Stick -Recurse -File | Where-Object { $_.Name -notin 'firmware-manifest.json', 'READY' }) {
+            $file.LastWriteTimeUtc.Ticks | Should -Be $before[$file.FullName] -Because $file.FullName
+        }
+    }
+}
+
+Describe 'Build-ToolsStick model list' {
+    It 'selects the same two models from <Name>' -ForEach @(
+        @{ Name = 'one comma-joined string'; Value = @('m1,m2') }
+        @{ Name = 'an array'; Value = @('m1', 'm2') }
+        @{ Name = 'an array with a padded id'; Value = @('m1', ' m2') }
+        @{ Name = 'a list with a repeated id'; Value = @('m1', 'm2', 'm1') }
+    ) {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = $Value
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        @((Read-StickManifest -Stick $ws.Stick).models | ForEach-Object { $_.modelId }) | Should -Be @('m1', 'm2')
+    }
+    It 'stops with the available ids for an unknown model' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm9'
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Output | Should -Match 'm1'
+        $run.Output | Should -Match 'm2'
+        (Join-Path $ws.Out 'fixture') | Should -Not -Exist
+    }
+}
+
+Describe 'Build-ToolsStick -FlashModel, -IncludeKit and -RemoveStale' {
+    It 'stages one model and the flash-image group with -FlashModel' {
+        $ws = New-TestWorkspace
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = @('m1', 'm2')
+        $parameter.FlashModel = 'm1'
+        $parameter.DiagnosticsSource = $ws.Capture
+        $parameter.NewDiagnosticsSnapshot = $true
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        @((Read-StickManifest -Stick $ws.Stick).models | ForEach-Object { $_.modelId }) | Should -Be @('m1')
+        [IO.File]::ReadAllText((Join-Path $ws.Stick 'FX\DEVFW\firmware.bin')) | Should -Be 'fixture bios m1'
+        (Join-Path $ws.Stick 'Vendor\BIOS\New\F01_000100.bin') | Should -Not -Exist
+    }
+    It 'stops and lists the selected models when -FlashModel is not one of them' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $parameter.FlashModel = 'm2'
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Output | Should -Match 'm1'
+        (Join-Path $ws.Out 'fixture') | Should -Not -Exist
+    }
+    It 'copies the kit only with -IncludeKit and never its local config' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $plain = Invoke-Master -Parameter $parameter
+        $plain.ExitCode | Should -Be 0 -Because $plain.Output
+        (Join-Path $ws.Stick 'kit') | Should -Not -Exist
+        $parameter.IncludeKit = $true
+        $with = Invoke-Master -Parameter $parameter
+        $with.ExitCode | Should -Be 0 -Because $with.Output
+        (Join-Path $ws.Stick 'kit\Run.cmd') | Should -Exist
+        (Join-Path $ws.Stick 'kit\config.local.psd1') | Should -Not -Exist
+    }
+    It 'fails on a stale file in a closed folder and removes it with -RemoveStale' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        (Invoke-Master -Parameter $parameter).ExitCode | Should -Be 0
+        $stale = Join-Path $ws.Stick 'Vendor\BIOS\New\old.bin'
+        [IO.File]::WriteAllText($stale, 'old', [Text.Encoding]::ASCII)
+        $blocked = Invoke-Master -Parameter $parameter
+        $blocked.ExitCode | Should -Be 1
+        $blocked.Output | Should -Match 'old\.bin'
+        $parameter.RemoveStale = $true
+        $cleaned = Invoke-Master -Parameter $parameter
+        $cleaned.ExitCode | Should -Be 0 -Because $cleaned.Output
+        $stale | Should -Not -Exist
+    }
+}
+
+Describe 'Build-ToolsStick -WhatIf and -ValidateOnly' {
+    It 'previews the download and stages nothing under -WhatIf' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $parameter.WhatIf = $true
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        $run.Output | Should -Match 'nothing was staged'
+        @(Get-ChildItem -LiteralPath $ws.Stick -Force) | Should -BeNullOrEmpty
+    }
+    It 're-checks a stick with -ValidateOnly without calling a vendor' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        (Invoke-Master -Parameter $parameter).ExitCode | Should -Be 0
+        $before = @(Get-ChildItem -LiteralPath $ws.Out -Recurse -Force | ForEach-Object { $_.FullName })
+        $check = Invoke-Master -Parameter @{ ValidateOnly = $true; TargetPath = $ws.Stick; AllowFolder = $true }
+        $check.ExitCode | Should -Be 0 -Because $check.Output
+        $check.Output | Should -Not -Match '\[FAIL\]'
+        $check.Output | Should -Match 'READY'
+        @(Get-ChildItem -LiteralPath $ws.Out -Recurse -Force | ForEach-Object { $_.FullName }).Count | Should -Be $before.Count
+    }
+}
+
+Describe 'Build-ToolsStick diagnostics source selection' {
+    It 'names the layout when it has no capture to supply' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $parameter.DiagnosticsSource = $ws.Capture
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Output | Should -Match 'fixture\.layout\.psd1'
+    }
+    It 'lists the captures when there are two and no -CaptureName' {
+        $ws = New-TestWorkspace
+        $text = [IO.File]::ReadAllText($ws.Layout)
+        $text = $text.Replace("Snapshot = 'fx-diag.snapshot.psd1' }", "Snapshot = 'fx-diag.snapshot.psd1' }`n        @{ Name = 'fx-two'; PackageId = 'fxdiag2'; Version = '1.0'; Snapshot = 'fx-two.snapshot.psd1' }")
+        $text = $text.Replace('        @{ Id = ''G-Win'';', "        @{ Id = 'G-Two'; Folder = 'EFI\FT'; Source = 'Captured:fx-two'; Closed = `$false; Default = `$true`n            Verified = @{ Status = `$false; Model = @(); Bios = ''; Date = ''; By = '' } }`n        @{ Id = 'G-Win';")
+        [IO.File]::WriteAllText($ws.Layout, $text, [Text.Encoding]::ASCII)
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $parameter.DiagnosticsSource = $ws.Capture
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match 'fx-diag'
+        $run.Output | Should -Match 'fx-two'
+        $run.Output | Should -Match 'CaptureName'
+    }
+    It 'asks for -DiagnosticsSource with the FW-05 message when the layout needs a capture' {
+        $ws = New-TestWorkspace
+        $parameter = Get-MasterBase -Workspace $ws
+        $parameter.Model = 'm1'
+        $run = Invoke-Master -Parameter $parameter
+        $run.ExitCode | Should -Be 1
+        $run.Output | Should -Match '\[FAIL\] FW-05'
+        (Join-Path $ws.Stick 'firmware-manifest.json') | Should -Not -Exist
+        (Join-Path $ws.Stick 'READY') | Should -Not -Exist
+    }
+}
