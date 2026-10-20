@@ -91,7 +91,7 @@ Full gate on the final commit: lint 50 files 0 findings, secrets clean, 587 test
 
 - Catalog `Bin` validation rejects any character a file name cannot hold (separator, wildcard, colon), a superset of the plan's "path separator", because `-Filter` would otherwise treat `*` as a wildcard.
 - The hash-mismatch message prints the catalog `Ver` text (`1.36.00`), as the plan's wording requires, not the zero-padded `01.36.00`.
-- One full-gate run during the third commit reported 1 failed of 576; an immediate rerun of the identical tree passed (576). The failing test was not identified (output was truncated); no cause was found in the new code. Flag if it recurs.
+- The `changes nothing on disk` test was flaky: NTFS updates a folder's last-write time lazily, so the SoftPaq folder time changed between two snapshots with no write by the resolver. Fixed in a follow-up commit (test(02-02): ignore folder times in no-write check): folders are compared by name, files by name, size and last-write time.
 
 ## Known Stubs
 
