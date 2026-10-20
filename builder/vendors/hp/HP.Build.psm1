@@ -5,6 +5,10 @@
 # Kit.Core is offline-safe and supplies Get-KitProfile and Get-KitPackagePath.
 Import-Module (Join-Path $PSScriptRoot '..\..\..\kit\core\Kit.Core.psd1')
 
+# The HPCMSL release this kit was researched against. A builder that does not have HPCMSL yet installs exactly this
+# one from the PowerShell Gallery; an HPCMSL that is already installed is used as it is.
+$script:HPCMSLRequiredVersion = '1.9.0'
+
 function Select-OsRelease {
     <#
     .SYNOPSIS
@@ -114,15 +118,41 @@ function ConvertTo-ReturnCodeMap {
     $map
 }
 
+function Test-HPKitHPCMSLInstalled {
+    # True when HPCMSL is installed on this PC. A seam over the module list; tests mock it.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    [bool](Get-Module -ListAvailable -Name HPCMSL)
+}
+
+function Get-HPKitPowerShellGetVersion {
+    # The highest installed PowerShellGet version, or $null when there is none. A seam over the module list; tests mock it.
+    [CmdletBinding()]
+    [OutputType([version])]
+    param()
+
+    $module = Get-Module -ListAvailable -Name PowerShellGet | Sort-Object -Property Version -Descending | Select-Object -First 1
+    if ($module) { $module.Version }
+}
+
 function Initialize-HPCMSL {
     # Import HPCMSL, installing it from the PowerShell Gallery first when it is missing. Build operations
-    # call this lazily, so merely importing this module never needs HPCMSL.
+    # call this lazily, so merely importing this module never needs HPCMSL. The install is pinned to one release,
+    # and a PC whose PowerShellGet is too old to install it is told the fix before any install is tried.
     [CmdletBinding()]
     param()
 
-    if (Get-Module -ListAvailable -Name HPCMSL) {
+    if (Test-HPKitHPCMSLInstalled) {
         Import-Module HPCMSL
         return
+    }
+
+    $powerShellGet = Get-HPKitPowerShellGetVersion
+    if ($null -eq $powerShellGet -or $powerShellGet -lt [version]'2.0.0') {
+        $has = if ($null -eq $powerShellGet) { 'no PowerShellGet' } else { "PowerShellGet $powerShellGet" }
+        throw "HPCMSL is not installed and this PC has $has (2.0.0 or newer is needed to install it from the PowerShell Gallery). Run 'Install-Module PowerShellGet -Force' in an elevated session, open a new PowerShell window, then run this build again."
     }
 
     Write-Information 'Installing HPCMSL from the PowerShell Gallery...'
@@ -131,7 +161,7 @@ function Initialize-HPCMSL {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
     }
-    $install = @{ Name = 'HPCMSL'; Scope = 'AllUsers'; Force = $true }
+    $install = @{ Name = 'HPCMSL'; RequiredVersion = $script:HPCMSLRequiredVersion; Scope = 'AllUsers'; Force = $true }
     # -AcceptLicense only exists in PowerShellGet 2.x+; inbox 1.0.0.1 on 5.1 lacks it.
     if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) { $install.AcceptLicense = $true }
     Install-Module @install
@@ -165,6 +195,27 @@ function Reset-HPKitDirectory {
     if (-not $PSCmdlet.ShouldProcess($Path, 'Recreate empty directory')) { return }
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
     $null = New-Item -Path $Path -ItemType Directory -Force
+}
+
+function Test-HPKitSoftpaqCache {
+    # True when a SoftPaq folder from an earlier build can be reused: its <id>.exe hashes to the value HP's CVA gives
+    # (compared without regard to case) and at least one extracted file sits beside it. Anything else, including a
+    # CVA with no hash, means the folder is emptied and the download is repeated.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$Id,
+        [AllowEmptyString()][string]$ExpectedSha256 = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) { return $false }
+    $executable = Join-Path -Path $Directory -ChildPath "$Id.exe"
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { return $false }
+    if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $ExpectedSha256.Trim()) { return $false }
+    $executableFullName = (Get-Item -LiteralPath $executable -Force).FullName
+    $extracted = @(Get-ChildItem -LiteralPath $Directory -Recurse -File -Force | Where-Object { $_.FullName -ne $executableFullName })
+    $extracted.Count -gt 0
 }
 
 function ConvertTo-HPKitSoftpaqSummary {
@@ -329,6 +380,11 @@ function Save-HPKitFirmware {
     .SYNOPSIS
     Download and extract the model's BIOS and firmware SoftPaqs (GetFirmware operation).
 
+    .DESCRIPTION
+    A SoftPaq folder from an earlier build is reused when its <id>.exe hashes to the SHA-256 in HP's CVA and extracted
+    files sit beside it; otherwise the folder is emptied and the SoftPaq is downloaded again. Folders of SoftPaqs that
+    are no longer selected are removed. Under -WhatIf nothing is removed and nothing is downloaded.
+
     .PARAMETER ModelProfile
     Model profile from Get-KitProfile.
 
@@ -361,17 +417,34 @@ function Save-HPKitFirmware {
 
     $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category BIOS, Firmware) -Exclude $ModelProfile.FirmwareExclude
     $firmwareDir = Join-Path $packageDir 'Firmware'
-    Reset-HPKitDirectory -Path $firmwareDir
+
+    # A SoftPaq folder that is no longer selected is removed; the ones still selected are kept so a verified download
+    # can be reused (the Firmware folder is not emptied as a whole any more).
+    $selectedId = @($selection.Included | ForEach-Object { [string]$_.id })
+    if ($PSCmdlet.ShouldProcess($firmwareDir, 'Remove superseded firmware folders')) {
+        $null = New-Item -Path $firmwareDir -ItemType Directory -Force
+        foreach ($folder in @(Get-ChildItem -LiteralPath $firmwareDir -Directory -Force)) {
+            if ($selectedId -notcontains $folder.Name) { Remove-Item -LiteralPath $folder.FullName -Recurse -Force }
+        }
+    }
 
     $firmware = @(foreach ($sp in $selection.Included) {
             $number = $sp.id -replace '^sp', ''
             $extractDir = Join-Path $firmwareDir $sp.id
-            if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
-                # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
-                $null = Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
+            $meta = Get-HPSoftpaqMetadata -Number $number
+
+            # The CVA SHA-256 is HP's own hash of the SoftPaq executable: the cache is trusted only when it matches.
+            if (Test-HPKitSoftpaqCache -Directory $extractDir -Id $sp.id -ExpectedSha256 ([string]$meta.Softpaq.SoftPaqSHA256)) {
+                Write-Information "$($sp.id): reusing the cached download (SHA-256 matches HP's CVA)"
+            }
+            else {
+                Reset-HPKitDirectory -Path $extractDir
+                if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
+                    # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
+                    $null = Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
+                }
             }
 
-            $meta = Get-HPSoftpaqMetadata -Number $number
             $silent = $meta.'Install Execution'.SilentInstall
             $entry = $sp | ConvertTo-HPKitSoftpaqSummary
             $entry | Add-Member -NotePropertyMembers ([ordered]@{
@@ -397,6 +470,100 @@ function Save-HPKitFirmware {
     }
 }
 
+function Get-HPKitWindowsFlashFile {
+    <#
+    .SYNOPSIS
+    List the files of an extracted SoftPaq folder that may be staged as the Windows flash fallback.
+
+    .DESCRIPTION
+    Private helper of Get-HPKitFirmwareStickLayout. Every file below the folder is listed with its path inside the
+    folder, sub-folders kept. The SoftPaq self-extractor <PackageId>.exe at the folder root is left out without a note
+    (it is not part of the tool). A BIOS password file (HPQPswd*.bin, password.bin) is left out with a note, because
+    such a file is generated from a password and must never travel on a stick. Files are sorted by path, ordinal and
+    case-insensitive.
+
+    .PARAMETER Directory
+    The extracted SoftPaq folder, the one that holds the BIOS image.
+
+    .PARAMETER PackageId
+    The SoftPaq id, for example sp174025.
+
+    .OUTPUTS
+    File (Relative, FullName, Length for each file) and Note (one sentence for each file left out).
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$PackageId
+    )
+
+    $root = (Resolve-Path -LiteralPath $Directory).ProviderPath.TrimEnd('\')
+    $file = [System.Collections.Generic.List[object]]::new()
+    $note = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -File -Force) {
+        $relative = $item.FullName.Substring($root.Length + 1)
+        if ($relative -eq "$PackageId.exe") { continue }
+        if ($item.Name -like '*Pswd*.bin' -or $item.Name -eq 'password.bin') {
+            $note.Add("Left out $($item.Name): BIOS password files are never staged.")
+            continue
+        }
+        $file.Add([pscustomobject]@{ Relative = $relative; FullName = $item.FullName; Length = [long]$item.Length })
+    }
+    $file.Sort([System.Comparison[object]] {
+            param($left, $right)
+            [string]::Compare($left.Relative, $right.Relative, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+    [pscustomobject]@{ File = $file.ToArray(); Note = $note.ToArray() }
+}
+
+function Get-HPKitDependencyMinimum {
+    <#
+    .SYNOPSIS
+    Read the BIOS a SoftPaq needs first from its CVA [Dependency] section.
+
+    .DESCRIPTION
+    Private helper of Get-HPKitFirmwareStickLayout. The key is MinimumBIOSVersion_<BiosFamily>. The version is written
+    two digits per part (1.35.2 becomes 01.35.02; a missing third part counts as 0). A value that is not a version is
+    kept as written and explained in Note. A SoftPaq with no Dependency section, or none for this family, gives an
+    empty Value.
+
+    .PARAMETER Dependency
+    The CVA Dependency section, or $null.
+
+    .PARAMETER BiosFamily
+    The BIOS family of the model, for example R70.
+
+    .OUTPUTS
+    Value (the minimum BIOS as text, or empty) and Note (a sentence, or empty).
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()][object]$Dependency,
+        [Parameter(Mandatory)][string]$BiosFamily
+    )
+
+    $key = "MinimumBIOSVersion_$BiosFamily"
+    $raw = $null
+    if ($Dependency -is [System.Collections.IDictionary]) {
+        if ($Dependency.Contains($key)) { $raw = $Dependency[$key] }
+    }
+    elseif ($null -ne $Dependency) {
+        $property = $Dependency.PSObject.Properties[$key]
+        if ($property) { $raw = $property.Value }
+    }
+    $text = ([string]$raw).Trim()
+    if (-not $text) { return [pscustomobject]@{ Value = ''; Note = '' } }
+
+    $parsed = $null
+    if ([version]::TryParse($text, [ref]$parsed)) {
+        $value = '{0:D2}.{1:D2}.{2:D2}' -f $parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build)
+        return [pscustomobject]@{ Value = $value; Note = '' }
+    }
+    [pscustomobject]@{ Value = $text; Note = "The BIOS dependency '$text' is not a version number; it is recorded as written." }
+}
+
 function Get-HPKitFirmwareStickLayout {
     <#
     .SYNOPSIS
@@ -411,7 +578,12 @@ function Get-HPKitFirmwareStickLayout {
     The result is the vendor contract Kit.FirmwareStickLayout: PlatformId, PlatformVerified, BiosFamily,
     LatestBios, Entries and Notes. One entry is produced per layout group that this module resolves: a
     BiosImage group gives the image under its folder, a FlashImage group gives a copy named firmware.bin,
-    a Captured group gives nothing (the core replays it from a recorded snapshot).
+    a WindowsFlashTool group gives every file of the extracted SoftPaq folder except the self-extractor and any BIOS
+    password file, a Captured group gives nothing (the core replays it from a recorded snapshot).
+
+    The SoftPaq metadata (Get-HPSoftpaqMetadata, the CVA) fills WindowsFlash (how to run the flash tool and what its
+    return codes mean) and LatestBios.DependencyMinimum (the BIOS the image needs first; it is recorded, never staged).
+    A SoftPaq executable whose SHA-256 differs from the CVA value stops the call, naming the file.
 
     .PARAMETER ModelProfile
     Model profile from Get-KitProfile.
@@ -480,23 +652,73 @@ function Get-HPKitFirmwareStickLayout {
     }
     $sha256 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 
-    $entries = foreach ($group in $layout.Groups) {
+    $entries = [System.Collections.Generic.List[object]]::new()
+    $notes = [System.Collections.Generic.List[string]]::new()
+
+    # The CVA of the SoftPaq says how to run the flash tool, which BIOS the image needs first and what the executable
+    # must hash to. A metadata call that fails stops the build.
+    $packageId = $image.Directory.Name
+    $meta = Get-HPSoftpaqMetadata -Number ($packageId -replace '^sp', '')
+    $executable = Join-Path -Path $image.Directory.FullName -ChildPath "$packageId.exe"
+    $cvaSha256 = [string]$meta.Softpaq.SoftPaqSHA256
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        $notes.Add("$packageId.exe is not cached; its hash was not rechecked.")
+    }
+    elseif (-not $cvaSha256) {
+        $notes.Add("HP published no SHA-256 for $packageId.exe.")
+    }
+    elseif ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $cvaSha256.Trim()) {
+        throw "SoftPaq executable $packageId.exe does not match the HP CVA hash; delete $($image.Directory.FullName) and rebuild."
+    }
+    $dependency = Get-HPKitDependencyMinimum -Dependency $meta.Dependency -BiosFamily ([string]$ModelProfile.BiosFamily)
+    if ($dependency.Note) { $notes.Add($dependency.Note) }
+
+    foreach ($group in $layout.Groups) {
         $folder = $group.Folder.Replace('{Platform}', $platformId)
-        $relativePath = switch ($group.SourceKind) {
-            'BiosImage' { "$folder\$bin" }
-            'FlashImage' { "$folder\firmware.bin" }
-            'Captured' { $null }
+        switch ($group.SourceKind) {
+            { $_ -in 'BiosImage', 'FlashImage' } {
+                $leaf = if ($_ -eq 'BiosImage') { $bin } else { 'firmware.bin' }
+                $entries.Add([pscustomobject]@{
+                        RelativePath = "$folder\$leaf"
+                        SourcePath   = $image.FullName
+                        Group        = $group.Id
+                        Size         = $image.Length
+                        Sha256       = $sha256
+                        VendorHash   = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $vendorSha384; Source = 'Get-HPBIOSUpdates -All' }
+                    })
+            }
+            'WindowsFlashTool' {
+                $tool = Get-HPKitWindowsFlashFile -Directory $image.Directory.FullName -PackageId $image.Directory.Name
+                foreach ($each in $tool.File) {
+                    $entries.Add([pscustomobject]@{
+                            RelativePath = "$folder\$($each.Relative)"
+                            SourcePath   = $each.FullName
+                            Group        = $group.Id
+                            Size         = $each.Length
+                            Sha256       = (Get-FileHash -LiteralPath $each.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                            VendorHash   = $null
+                        })
+                }
+                foreach ($note in $tool.Note) { $notes.Add($note) }
+            }
+            'Captured' { }
             default { throw "Layout group $($group.Id) uses source kind $($group.SourceKind), which this vendor module cannot resolve." }
         }
-        if ($relativePath) {
-            [pscustomobject]@{
-                RelativePath = $relativePath
-                SourcePath   = $image.FullName
-                Group        = $group.Id
-                Size         = $image.Length
-                Sha256       = $sha256
-                VendorHash   = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $vendorSha384; Source = 'Get-HPBIOSUpdates -All' }
-            }
+    }
+
+    # How to run the Windows flash tool: only when the layout stages it. The return codes keep the CVA order (by code).
+    $windowsFlash = $null
+    $toolGroup = $layout.Groups | Where-Object SourceKind -EQ 'WindowsFlashTool' | Select-Object -First 1
+    if ($toolGroup) {
+        $returnCodes = [ordered]@{}
+        $codeMap = ConvertTo-ReturnCodeMap $meta.ReturnCode
+        foreach ($code in $codeMap.Keys) {
+            $returnCodes[[string]$code] = if ($codeMap[$code].Reboot) { "$($codeMap[$code].Result):REBOOT" } else { [string]$codeMap[$code].Result }
+        }
+        $windowsFlash = [pscustomobject]@{
+            Path          = $toolGroup.Folder.Replace('{Platform}', $platformId)
+            SilentInstall = [string]$meta.'Install Execution'.SilentInstall
+            ReturnCodes   = $returnCodes
         }
     }
 
@@ -516,11 +738,11 @@ function Get-HPKitFirmwareStickLayout {
             Date              = $date
             PackageId         = $image.Directory.Name
             File              = $bin
-            DependencyMinimum = ''
+            DependencyMinimum = $dependency.Value
         }
-        WindowsFlash     = $null
-        Entries          = @($entries)
-        Notes            = @()
+        WindowsFlash     = $windowsFlash
+        Entries          = $entries.ToArray()
+        Notes            = $notes.ToArray()
     }
 }
 
