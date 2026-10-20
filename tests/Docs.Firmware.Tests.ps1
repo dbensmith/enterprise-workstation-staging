@@ -39,25 +39,24 @@ BeforeAll {
     }
 
     function Get-FencedBlock {
-        # One entry per fenced code block: the trimmed, non-blank lines inside it.
-        param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Line)
-        $blocks = New-Object System.Collections.Generic.List[object]
-        $current = $null
+        # One object per fenced code block; its Line property holds the trimmed, non-blank lines inside it.
+        param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Line)
+        $inside = $false
+        $current = @()
         foreach ($text in $Line) {
             if ($text -match '^\s*```') {
-                if ($null -eq $current) { $current = New-Object System.Collections.Generic.List[string] }
-                else { $blocks.Add(@($current)); $current = $null }
+                if ($inside) { [pscustomobject]@{ Line = $current }; $current = @() }
+                $inside = -not $inside
                 continue
             }
-            if ($null -ne $current -and $text.Trim()) { $current.Add($text.Trim()) }
+            if ($inside -and $text.Trim()) { $current += $text.Trim() }
         }
-        , @($blocks)
     }
 
     function Get-ProseLine {
         # The lines outside fenced code blocks.
         [CmdletBinding()]
-        param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Line)
+        param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Line)
         $inside = $false
         foreach ($text in $Line) {
             if ($text -match '^\s*```') { $inside = -not $inside; continue }
@@ -199,5 +198,123 @@ Describe 'Firmware bench checklist' {
         $script:checklistText | Should -Not -Match '(?i)scheduled'
         $script:checklistText | Should -Match '(?i)deferred'
         $script:checklistText | Should -Match '(?i)optional'
+    }
+}
+
+Describe 'README Tools stick firmware section' {
+    BeforeAll {
+        $script:readmeText = [IO.File]::ReadAllText($script:readmePath)
+        $script:readmeLines = @($script:readmeText -split '\r?\n')
+        $script:section = Get-DocSection -Text $script:readmeText -Heading '## Tools stick firmware'
+        $script:blocks = @(Get-FencedBlock -Line $script:section)
+        $script:prose = (Get-ProseLine -Line $script:section) -join "`n"
+        $script:headingLines = @($script:readmeLines | Where-Object { $_ -match '^## ' })
+    }
+
+    It 'has the heading once, after Where is everything and before Settings' {
+        @($script:readmeLines | Where-Object { $_ -ceq '## Tools stick firmware' }).Count | Should -Be 1
+        $at = [array]::IndexOf($script:headingLines, '## Tools stick firmware')
+        $at | Should -BeGreaterThan 0
+        $script:headingLines[$at - 1] | Should -Be '## Where is everything'
+        $script:headingLines[$at + 1] | Should -Be '## Settings (third-party installers)'
+    }
+
+    It 'holds exactly two fenced blocks of one command line each' {
+        $script:blocks.Count | Should -Be 2
+        foreach ($block in $script:blocks) {
+            @($block.Line).Count | Should -Be 1
+            foreach ($token in 'builder\Build-ToolsStick.ps1', '-Vendor HP', '-Model 840-g5,840-g6', '-TargetPath', '-DiagnosticsSource') {
+                @($block.Line)[0].Contains($token) | Should -BeTrue -Because "the command must carry $token"
+            }
+        }
+    }
+
+    It 'puts -NewDiagnosticsSnapshot on the first command and not on the second' {
+        @($script:blocks[0].Line)[0].Contains('-NewDiagnosticsSnapshot') | Should -BeTrue
+        @($script:blocks[1].Line)[0].Contains('-NewDiagnosticsSnapshot') | Should -BeFalse
+    }
+
+    It 'prints only real parameters after Build-ToolsStick.ps1' {
+        foreach ($block in $script:blocks) {
+            $names = @(Get-SwitchAfterScript -Line @($block.Line)[0])
+            $names.Count | Should -BeGreaterThan 0
+            foreach ($name in $names) {
+                $script:allowedSwitches | Should -Contain $name -Because "-$name is printed in the README command"
+            }
+        }
+    }
+
+    It 'explains the one-time capture before the first run' {
+        foreach ($token in 'first run', 'capture', 'docs/firmware-bench-checklist.md', '-NewDiagnosticsSnapshot', 'FW-05') {
+            $script:prose.Contains($token) | Should -BeTrue -Because "the prose must mention $token"
+        }
+    }
+
+    It 'names the real prose switch <Switch>' -ForEach @(
+        @{ Switch = 'NewDiagnosticsSnapshot' }
+        @{ Switch = 'ValidateOnly' }
+    ) {
+        $script:scriptParameters | Should -Contain $Switch
+        $script:prose.Contains("-$Switch") | Should -BeTrue
+    }
+
+    It 'names the checklist, READY, -ValidateOnly and FW-06' {
+        foreach ($token in 'docs/firmware-bench-checklist.md', 'READY', '-ValidateOnly', 'FW-06') {
+            $script:prose.Contains($token) | Should -BeTrue -Because "the prose must mention $token"
+        }
+    }
+
+    It 'does not imply that a bench is scheduled' {
+        $script:prose | Should -Not -Match '(?i)scheduled'
+        $script:prose | Should -Match '(?i)deferred'
+    }
+}
+
+Describe 'README pinned contracts stay intact' {
+    BeforeAll {
+        $script:readmeText = [IO.File]::ReadAllText($script:readmePath)
+        $script:auditUrl = 'https://raw.githubusercontent.com/dbensmith/enterprise-workstation-staging/main/kit/Test-DeviceBaseline.ps1'
+    }
+
+    It 'keeps exactly three fenced commands under Start here, in order' {
+        $section = Get-DocSection -Text $script:readmeText -Heading '## Start here'
+        $commands = @(foreach ($block in (Get-FencedBlock -Line $section)) { $block.Line })
+        $commands.Count | Should -Be 3
+        $commands[0] | Should -BeLike 'Build.cmd *'
+        $commands[1] | Should -BeLike '*New-BaselineIso.ps1*'
+        $commands[2] | Should -BeLike 'Run.cmd*'
+    }
+
+    It 'names no raw.githubusercontent.com URL other than the audit URL' {
+        $urls = @([regex]::Matches($script:readmeText, 'https://raw\.githubusercontent\.com/[\w./-]+') | ForEach-Object { $_.Value })
+        $urls.Count | Should -BeGreaterThan 0
+        @($urls | Where-Object { $_ -ne $script:auditUrl }) | Should -BeNullOrEmpty
+    }
+
+    It 'adds the tree line for <Path> inside the Where is everything block' -ForEach @(
+        @{ Path = 'builder/Build-ToolsStick.ps1'; Text = 'Tools stick firmware build (BIOS, diagnostics, flash tool)' }
+        @{ Path = 'kit/vendors/hp/layouts/'; Text = 'HP Tools stick layout and diagnostics snapshot' }
+        @{ Path = 'docs/firmware-bench-checklist.md'; Text = 'bench steps for FW-06' }
+    ) {
+        $section = Get-DocSection -Text $script:readmeText -Heading '## Where is everything'
+        $lines = @(foreach ($block in (Get-FencedBlock -Line $section)) { $block.Line })
+        $pattern = '^' + [regex]::Escape($Path) + '\s+' + [regex]::Escape($Text) + '$'
+        @($lines | Where-Object { $_ -match $pattern }).Count | Should -Be 1
+    }
+
+    It 'keeps the six paths of Where is everything' {
+        $section = (Get-DocSection -Text $script:readmeText -Heading '## Where is everything') -join "`n"
+        foreach ($path in 'kit/', 'builder/', 'kit/vendors/hp/', 'builder/vendors/hp/', 'kit/profiles/hp/', 'staging/') {
+            $section | Should -BeLike "*$path*"
+        }
+    }
+
+    It 'keeps Build.cmd pointed at Build-DriverBaseline.ps1' {
+        $cmd = [IO.File]::ReadAllText((Join-Path $script:repoRoot 'Build.cmd'))
+        $cmd.Contains('"%~dp0builder\Build-DriverBaseline.ps1" %*') | Should -BeTrue
+    }
+
+    It 'is pure ASCII' {
+        Test-Ascii -Path $script:readmePath | Should -BeTrue
     }
 }

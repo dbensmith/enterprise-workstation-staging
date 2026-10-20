@@ -39,22 +39,43 @@ kit/Test-DeviceBaseline.ps1        device audit
 kit/config.example.psd1            settings template
 kit/core/                          common module (Kit.Core)
 kit/vendors/hp/                    HP target module and descriptor
+kit/vendors/hp/layouts/            HP Tools stick layout and diagnostics snapshot
 kit/profiles/hp/                   per-model profiles (840-g5, 840-g6)
 kit/apps/                          third-party installer packages
 
 builder/                           PC only, never copied
 builder/Build-DriverBaseline.ps1   vendor-neutral package build
+builder/Build-ToolsStick.ps1       Tools stick firmware build (BIOS, diagnostics, flash tool)
 builder/iso/New-BaselineIso.ps1    ISO builder
 builder/vendors/hp/                HP catalog and download steps
 
 tests/                             Pester suites and fixtures
 docs/                              procedures
+docs/firmware-bench-checklist.md   bench steps for FW-06
 scripts/cloud-init.sh              sets up a cloud session for development
 staging/                           git-ignored output
 staging/<vendor>/<model>/<os>-<release>/   Drivers/, Firmware/ and manifest.json only
 ```
 
 A package holds data only. The installer is not copied into it. One copy lives in `kit/`.
+
+## Tools stick firmware
+
+Stage BIOS images, HP's UEFI diagnostics and the Windows flash tool on the Tools stick, in the folders HP's pre-Windows tools read. Run it on the builder PC from an elevated Command Prompt at the repo root, with a FAT32 stick inserted (replace E:\ with its drive letter).
+
+The first run needs a one-time capture of HP's UEFI diagnostics: follow section 3 of docs/firmware-bench-checklist.md, put the captured tree in staging\hp\captures\diagnostics-sp171653, and add -NewDiagnosticsSnapshot to this first run. It records the snapshot file next to the layout; review it and commit it.
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder\Build-ToolsStick.ps1 -Vendor HP -Model 840-g5,840-g6 -TargetPath E:\ -DiagnosticsSource staging\hp\captures\diagnostics-sp171653 -NewDiagnosticsSnapshot
+```
+
+Later runs leave -NewDiagnosticsSnapshot off and verify the capture against the committed snapshot; without the capture the build stops red with FW-05:
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File builder\Build-ToolsStick.ps1 -Vendor HP -Model 840-g5,840-g6 -TargetPath E:\ -DiagnosticsSource staging\hp\captures\diagnostics-sp171653
+```
+
+It checks the stick before downloading, prints green, yellow and red lines, and ends with READY or NOT READY; every red line names the file. To re-check a stick without building, run the script with only -ValidateOnly -TargetPath E:\ . Yellow 'not bench-verified' lines are expected: the layout has not been proven on a real 840 G5 or 840 G6, and requirement FW-06 is deferred because no such hardware is available. The bench steps are optional for anyone who later has the hardware. They, and the one-time capture of HP's diagnostics, are in docs/firmware-bench-checklist.md.
 
 ## Settings (third-party installers)
 
