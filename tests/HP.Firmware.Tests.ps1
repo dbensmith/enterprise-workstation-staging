@@ -327,9 +327,13 @@ Describe 'Get-HPKitFirmwareStickLayout' {
         }
 
         It 'changes nothing on disk' {
+            # Folder timestamps are updated lazily by NTFS, so folders are compared by name and files by name, size and time.
             $snapshot = {
                 @(Get-ChildItem -LiteralPath $script:root -Recurse -Force | Sort-Object -Property FullName |
-                        ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })
+                        ForEach-Object {
+                            if ($_.PSIsContainer) { '{0}|folder' -f $_.FullName }
+                            else { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks }
+                        })
             }
             $before = & $snapshot
             $null = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
