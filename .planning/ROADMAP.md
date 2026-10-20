@@ -12,8 +12,8 @@ The work starts from the existing HP 840 G6 baseline tooling. The repo is first 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Modular Foundation** - Common module plus HP vendor module behind one interface, G5/G6 profiles, clean tests and lint, no secrets in the repo
-- [ ] **Phase 2: Tools Stick Firmware Staging** - Master build script stages BIOS, UEFI diagnostics and the Windows flash fallback in HP's exact USB layout, validated and proven on real G5/G6
+- [x] **Phase 1: Modular Foundation** - Common module plus HP vendor module behind one interface, G5/G6 profiles, clean tests and lint, no secrets in the repo
+- [x] **Phase 2: Tools Stick Firmware Staging** - Master build script stages BIOS, UEFI diagnostics and the Windows flash fallback in HP's exact USB layout, validated (real G5/G6 flash proof FW-06 deferred, no hardware)
 - [ ] **Phase 3: Read-Only Assess** - Provisioning script runs from the Tools stick and gives a pre-purchase verdict saved per serial, changing nothing
 - [ ] **Phase 4: Per-Model Image and Install Stick** - ISO selection, vendor or custom driver packs, unattended per-model G5 and G6 images on a bootable Install stick, no firmware in the image
 - [ ] **Phase 5: Deploy and First Logon** - Deploy enforces the stage order; first logon runs drivers, the online gate and third-party PSADT installers, resumable across reboots
@@ -76,15 +76,15 @@ Plans:
 - [x] 02-01-PLAN.md - Core layout loader and stick validator (Test-FirmwareStage: hashes, FAT32 rules, closed folders, READY, phone-width output)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-02-PLAN.md - GetFirmwareStickLayout contract operation, fixture vendor, HP layout data and BIOS image resolver
-- [ ] 02-03-PLAN.md - Publish-FirmwareStage (manifest, READY, merge and collision rule, -FlashModel) and diagnostics capture and replay
+- [x] 02-02-PLAN.md - GetFirmwareStickLayout contract operation, fixture vendor, HP layout data and BIOS image resolver
+- [x] 02-03-PLAN.md - Publish-FirmwareStage (manifest, READY, merge and collision rule, -FlashModel) and diagnostics capture and replay
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 02-04-PLAN.md - HP Windows flash fallback, CVA metadata, download reuse, HPCMSL pre-flight, and the shipped-layout end-to-end proof through Publish-FirmwareStage and Test-FirmwareStage
-- [ ] 02-05-PLAN.md - builder/Build-ToolsStick.ps1 master script with child-process exit-code tests
+- [x] 02-04-PLAN.md - HP Windows flash fallback, CVA metadata, download reuse, HPCMSL pre-flight, and the shipped-layout end-to-end proof through Publish-FirmwareStage and Test-FirmwareStage
+- [x] 02-05-PLAN.md - builder/Build-ToolsStick.ps1 master script with child-process exit-code tests
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 02-06-PLAN.md - Bench checklist and README (FW-06 hardware step as a checkpoint recorded as pending; the phase ends human_needed by design)
+- [x] 02-06-PLAN.md - Bench checklist and README (FW-06 deferred: no hardware)
 
 ### Phase 3: Read-Only Assess
 
@@ -158,8 +158,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Modular Foundation | 8/8 | In Progress | - |
-| 2. Tools Stick Firmware Staging | 1/6 | In Progress | - |
+| 1. Modular Foundation | 8/8 | Complete | 2026-10-19 |
+| 2. Tools Stick Firmware Staging | 6/6 | Complete (FW-06 deferred) | 2026-10-20 |
 | 3. Read-Only Assess | 0/TBD | Not started | - |
 | 4. Per-Model Image and Install Stick | 0/TBD | Not started | - |
 | 5. Deploy and First Logon | 0/TBD | Not started | - |
