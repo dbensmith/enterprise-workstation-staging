@@ -397,4 +397,131 @@ function Save-HPKitFirmware {
     }
 }
 
-Export-ModuleMember -Function Select-OsRelease, Select-BaselineSoftpaq, Split-SoftpaqCommand, ConvertTo-ReturnCodeMap, Get-HPKitModel, Save-HPKitVendorPack, New-HPKitCustomPack, Save-HPKitFirmware
+function Get-HPKitFirmwareStickLayout {
+    <#
+    .SYNOPSIS
+    Resolve the model's downloaded BIOS image into Tools stick entries (GetFirmwareStickLayout operation).
+
+    .DESCRIPTION
+    Reads the firmware package the GetFirmware operation already filled and the HP stick layout, asks the HP
+    catalog for the platform's BIOS list (Get-HPBIOSUpdates -All), takes the highest version and finds that
+    version's image in the package by the catalog's file name. There is no second download. The image keeps
+    the name HP ships, so the G5 and G6 images never share a path. The function only reads: it writes nothing.
+
+    The result is the vendor contract Kit.FirmwareStickLayout: PlatformId, PlatformVerified, BiosFamily,
+    LatestBios, Entries and Notes. One entry is produced per layout group that this module resolves: a
+    BiosImage group gives the image under its folder, a FlashImage group gives a copy named firmware.bin,
+    a Captured group gives nothing (the core replays it from a recorded snapshot).
+
+    .PARAMETER ModelProfile
+    Model profile from Get-KitProfile.
+
+    .PARAMETER PackagePath
+    The package folder the GetFirmware operation returned.
+
+    .PARAMETER LayoutPath
+    Layout file to use. Empty means the HP layout shipped under kit\vendors\hp\layouts.
+
+    .EXAMPLE
+    Get-HPKitFirmwareStickLayout -ModelProfile $modelProfile -PackagePath $firmware.PackagePath -LayoutPath ''
+
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [Parameter(Mandatory)][string]$PackagePath,
+        [AllowEmptyString()][string]$LayoutPath
+    )
+
+    Initialize-HPCMSL
+    if (-not $LayoutPath) {
+        $LayoutPath = Join-Path -Path (Get-KitRoot) -ChildPath 'vendors\hp\layouts\hp-usb-flash.layout.psd1'
+    }
+    $layout = Get-KitFirmwareLayout -Path $LayoutPath
+    $platformId = Get-KitVerifiedValue -ModelProfile $ModelProfile -Name Platform -AllowUnverified
+
+    # The build stops on the first problem and names the file: nothing is staged from a download that cannot be trusted.
+    $catalog = @(Get-HPBIOSUpdates -Platform $platformId -All)
+    if ($catalog.Count -eq 0) {
+        throw "The HP catalog lists no BIOS update for platform $platformId ($($ModelProfile.ModelId)); there is no image to resolve."
+    }
+    $latest = $catalog | Sort-Object -Property @{ Expression = { [version]$_.Ver }; Descending = $true } | Select-Object -First 1
+    $version = [version]$latest.Ver
+    $bin = [string]$latest.Bin
+    $vendorSha384 = ([string]$latest.Sha384).ToLowerInvariant()
+    if (-not $vendorSha384) {
+        throw "The HP catalog entry for $bin (BIOS $($latest.Ver)) has no SHA-384, so the image cannot be verified."
+    }
+    if ([string]::IsNullOrWhiteSpace($bin) -or $bin.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+        throw "The HP catalog file name '$bin' for BIOS $($latest.Ver) is not a plain file name (it is empty, or holds a path separator or another character a file name cannot hold)."
+    }
+
+    $firmwareDir = Join-Path -Path $PackagePath -ChildPath 'Firmware'
+    $found = @()
+    if (Test-Path -LiteralPath $firmwareDir -PathType Container) {
+        $found = @(Get-ChildItem -LiteralPath $firmwareDir -Recurse -File -Filter $bin)
+    }
+    if ($found.Count -eq 0) {
+        throw "BIOS image $bin ($($latest.Ver)) was not found under $firmwareDir; run the firmware stage first."
+    }
+    if ($found.Count -gt 1) {
+        throw "BIOS image $bin ($($latest.Ver)) was found in more than one folder: $(($found | ForEach-Object { $_.DirectoryName }) -join '; '). Remove the extra copy and run the firmware stage again."
+    }
+    $image = $found[0]
+    if (-not $bin.StartsWith([string]$ModelProfile.BiosFamily, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "BIOS image $bin does not belong to $($ModelProfile.ModelId): a $($ModelProfile.BiosFamily) image name starts with $($ModelProfile.BiosFamily)."
+    }
+    $sha384 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA384).Hash.ToLowerInvariant()
+    if ($sha384 -ne $vendorSha384) {
+        throw "BIOS image $bin does not match the HP catalog hash for $($latest.Ver) (catalog $vendorSha384, file $sha384); download it again."
+    }
+    $sha256 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $entries = foreach ($group in $layout.Groups) {
+        $folder = $group.Folder.Replace('{Platform}', $platformId)
+        $relativePath = switch ($group.SourceKind) {
+            'BiosImage' { "$folder\$bin" }
+            'FlashImage' { "$folder\firmware.bin" }
+            'Captured' { $null }
+            default { throw "Layout group $($group.Id) uses source kind $($group.SourceKind), which this vendor module cannot resolve." }
+        }
+        if ($relativePath) {
+            [pscustomobject]@{
+                RelativePath = $relativePath
+                SourcePath   = $image.FullName
+                Group        = $group.Id
+                Size         = $image.Length
+                Sha256       = $sha256
+                VendorHash   = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $vendorSha384; Source = 'Get-HPBIOSUpdates -All' }
+            }
+        }
+    }
+
+    $date = if ($latest.Date -is [datetime]) { $latest.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } else { [string]$latest.Date }
+    [pscustomobject]@{
+        PSTypeName       = 'Kit.FirmwareStickLayout'
+        Operation        = 'GetFirmwareStickLayout'
+        Vendor           = $ModelProfile.Vendor
+        LayoutPath       = $layout.Path
+        ModelId          = $ModelProfile.ModelId
+        Name             = $ModelProfile.Name
+        PlatformId       = $platformId
+        PlatformVerified = [bool]$ModelProfile.PlatformVerified
+        BiosFamily       = $ModelProfile.BiosFamily
+        LatestBios       = [pscustomobject]@{
+            Version           = '{0:D2}.{1:D2}.{2:D2}' -f $version.Major, $version.Minor, [Math]::Max(0, $version.Build)
+            Date              = $date
+            PackageId         = $image.Directory.Name
+            File              = $bin
+            DependencyMinimum = ''
+        }
+        WindowsFlash     = $null
+        Entries          = @($entries)
+        Notes            = @()
+    }
+}
+
+Export-ModuleMember -Function Select-OsRelease, Select-BaselineSoftpaq, Split-SoftpaqCommand, ConvertTo-ReturnCodeMap, Get-HPKitModel, Save-HPKitVendorPack, New-HPKitCustomPack, Save-HPKitFirmware, Get-HPKitFirmwareStickLayout

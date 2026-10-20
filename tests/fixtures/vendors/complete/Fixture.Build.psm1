@@ -103,6 +103,9 @@ function Save-FixtureKitFirmware {
     if ($PSCmdlet.ShouldProcess($firmwareDir, 'Write the fixture firmware')) {
         $null = New-Item -Path $firmwareDir -ItemType Directory -Force
         Set-Content -LiteralPath (Join-Path $firmwareDir 'readme.txt') -Value 'fixture firmware'
+        # A run-time image: tests never commit a .bin, they let this operation write one into TestDrive.
+        $imageBytes = [Text.Encoding]::ASCII.GetBytes('fixture bios ' + $ModelProfile.ModelId)
+        [IO.File]::WriteAllBytes((Join-Path $firmwareDir ($ModelProfile.BiosFamily + '_000100.bin')), $imageBytes)
     }
     [pscustomobject]@{
         Operation    = 'GetFirmware'
@@ -126,4 +129,103 @@ function Save-FixtureKitFirmware {
     }
 }
 
-Export-ModuleMember -Function Get-FixtureKitModel, Save-FixtureKitVendorPack, New-FixtureKitCustomPack, Save-FixtureKitFirmware
+function Get-FixtureKitFirmwareStickLayout {
+    <#
+    .SYNOPSIS
+    Fixture stand-in for the GetFirmwareStickLayout operation.
+
+    .DESCRIPTION
+    Reads the firmware package the fixture GetFirmware operation wrote and the fixture layout, and returns the
+    vendor result contract: one entry per file the layout asks this vendor for. It only reads.
+
+    .PARAMETER ModelProfile
+    Model profile object.
+
+    .PARAMETER PackagePath
+    The package folder the GetFirmware operation returned.
+
+    .PARAMETER LayoutPath
+    Layout file to use. Empty means the fixture layout under tests\fixtures\firmware.
+
+    .EXAMPLE
+    Get-FixtureKitFirmwareStickLayout -ModelProfile $modelProfile -PackagePath $package.PackagePath
+
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][hashtable]$ModelProfile,
+        [Parameter(Mandatory)][string]$PackagePath,
+        [AllowEmptyString()][string]$LayoutPath
+    )
+    if (-not $LayoutPath) {
+        $LayoutPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\firmware\fixture.layout.psd1'))
+    }
+    $layout = Get-KitFirmwareLayout -Path $LayoutPath
+
+    $imageName = $ModelProfile.BiosFamily + '_000100.bin'
+    $packageDir = Join-Path $PackagePath 'Firmware\fx100'
+    $imagePath = Join-Path $packageDir $imageName
+    if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+        throw "Fixture BIOS image $imageName was not found under $packageDir; run the firmware stage first."
+    }
+    $platformId = [string]$ModelProfile.Platform
+    $imageHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA384).Hash.ToLowerInvariant()
+
+    $newEntry = {
+        param([string]$RelativePath, [string]$SourcePath, [string]$GroupId, [bool]$WithVendorHash)
+        $vendorHash = $null
+        if ($WithVendorHash) {
+            $vendorHash = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $imageHash; Source = 'fixture catalog' }
+        }
+        [pscustomobject]@{
+            RelativePath = $RelativePath
+            SourcePath   = $SourcePath
+            Group        = $GroupId
+            Size         = ([IO.FileInfo]$SourcePath).Length
+            Sha256       = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            VendorHash   = $vendorHash
+        }
+    }
+
+    $entries = foreach ($group in $layout.Groups) {
+        $folder = $group.Folder.Replace('{Platform}', $platformId)
+        switch ($group.SourceKind) {
+            'BiosImage' { & $newEntry "$folder\$imageName" $imagePath $group.Id $true }
+            'FlashImage' { & $newEntry "$folder\firmware.bin" $imagePath $group.Id $true }
+            'WindowsFlashTool' {
+                $root = (Resolve-Path -LiteralPath $packageDir).ProviderPath
+                foreach ($file in (Get-ChildItem -LiteralPath $packageDir -Recurse -File | Sort-Object -Property FullName)) {
+                    $relative = $file.FullName.Substring($root.Length).TrimStart('\')
+                    & $newEntry "$folder\$relative" $file.FullName $group.Id $false
+                }
+            }
+            'Captured' { }
+            default { throw "Layout group $($group.Id) uses source kind $($group.SourceKind), which the fixture vendor cannot resolve." }
+        }
+    }
+
+    [pscustomobject]@{
+        PSTypeName       = 'Kit.FirmwareStickLayout'
+        Operation        = 'GetFirmwareStickLayout'
+        Vendor           = 'Fixture'
+        LayoutPath       = $layout.Path
+        ModelId          = $ModelProfile.ModelId
+        Name             = $ModelProfile.Name
+        PlatformId       = $platformId
+        PlatformVerified = [bool]$ModelProfile.PlatformVerified
+        BiosFamily       = $ModelProfile.BiosFamily
+        LatestBios       = [pscustomobject]@{ Version = '01.00.00'; Date = '2026-01-01'; PackageId = 'fx100'; File = $imageName; DependencyMinimum = '' }
+        WindowsFlash     = [pscustomobject]@{
+            Path          = "firmware\fx\$platformId"
+            SilentInstall = 'fx.exe /s'
+            ReturnCodes   = [ordered]@{ '0' = 'SUCCESS' }
+        }
+        Entries          = @($entries)
+        Notes            = @()
+    }
+}
+
+Export-ModuleMember -Function Get-FixtureKitModel, Save-FixtureKitVendorPack, New-FixtureKitCustomPack, Save-FixtureKitFirmware, Get-FixtureKitFirmwareStickLayout
