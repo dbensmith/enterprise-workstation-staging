@@ -60,7 +60,62 @@ BeforeAll {
         [OutputType([pscustomobject])]
         param([Parameter(Mandatory)][hashtable]$Parameter)
         $lines = @(& $script:masterScript @Parameter 6>&1 | ForEach-Object { "$_" })
-        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($lines -join "`n"); Lines = $lines }
+        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($lines -join "`n"); Lines = $lines; Flat = (($lines -join ' ') -replace '\s+', ' ') }
+    }
+
+    # Run the master script in a real Windows PowerShell 5.1 process, the way Build.cmd starts one: PSModulePath cleared,
+    # a process-scope bypass, -File. Standard input comes from a file (empty by default) so a prompt can never wait on a
+    # person, and the child is killed after the timeout so the gate cannot hang. Output is the wrapped console text;
+    # Flat is the same text with line breaks and indents folded to single spaces, for matching phrases.
+    function Invoke-ScriptChild {
+        [CmdletBinding()]
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)][string[]]$ArgumentList,
+            [string]$InputText = '',
+            [int]$TimeoutSeconds = 240,
+            [switch]$NonInteractive
+        )
+        $executable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $stem = Join-Path $TestDrive ('child-' + [guid]::NewGuid().ToString('N'))
+        $inputFile = "$stem.in"
+        $outputFile = "$stem.out"
+        $errorFile = "$stem.err"
+        [IO.File]::WriteAllText($inputFile, $InputText, [Text.Encoding]::ASCII)
+        $lead = @('-NoProfile')
+        if ($NonInteractive) { $lead += '-NonInteractive' }
+        $lead += @('-ExecutionPolicy', 'Bypass', '-File', $script:masterScript)
+        $quoted = foreach ($item in @($lead) + @($ArgumentList)) {
+            if ($item -match '[\s"]') { '"' + $item.Replace('"', '\"') + '"' } else { $item }
+        }
+        $commandLine = $quoted -join ' '
+        $savedModulePath = $env:PSModulePath
+        $env:PSModulePath = ''
+        try {
+            $process = Start-Process -FilePath $executable -ArgumentList $commandLine -NoNewWindow -PassThru `
+                -RedirectStandardInput $inputFile -RedirectStandardOutput $outputFile -RedirectStandardError $errorFile
+        }
+        finally {
+            $env:PSModulePath = $savedModulePath
+        }
+        $null = $process.Handle
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill()
+            throw "The child process did not finish within $TimeoutSeconds seconds: $commandLine"
+        }
+        $process.WaitForExit()
+        $text = @($outputFile, $errorFile | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n"
+        [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $text; Flat = ($text -replace '\s+', ' ') }
+    }
+
+    # The command line every fixture child run shares, as a list of strings.
+    function Get-ChildBase {
+        [CmdletBinding()]
+        [OutputType([object[]])]
+        param([Parameter(Mandatory)][pscustomobject]$Workspace, [switch]$NoPrompt)
+        $list = @('-ProfileRoot', $script:profileRoot, '-LayoutPath', $Workspace.Layout, '-OutputRoot', $Workspace.Out, '-AllowFolder', '-VendorRoot', $script:vendorRoot)
+        if (-not $NoPrompt) { $list += @('-Vendor', 'Fixture', '-TargetPath', $Workspace.Stick) }
+        $list
     }
 
     # The parameters every fixture run shares.
@@ -363,5 +418,194 @@ Describe 'Build-ToolsStick diagnostics source selection' {
         $run.Output | Should -Match '\[FAIL\] FW-05'
         (Join-Path $ws.Stick 'firmware-manifest.json') | Should -Not -Exist
         (Join-Path $ws.Stick 'READY') | Should -Not -Exist
+    }
+}
+
+Describe 'Build-ToolsStick exit codes through a real child process' {
+    It 'builds two models from one comma-joined -Model value and exits 0' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $run = Invoke-ScriptChild -ArgumentList ((Get-ChildBase -Workspace $ws) + @('-Model', 'm1,m2'))
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        @((Read-StickManifest -Stick $ws.Stick).models | ForEach-Object { $_.modelId }) | Should -Be @('m1', 'm2')
+        (Join-Path $ws.Stick 'READY') | Should -Exist
+    }
+    It 'refuses a target that is not a FAT32 volume root before any download' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $arguments = @('-Vendor', 'Fixture', '-VendorRoot', $script:vendorRoot, '-ProfileRoot', $script:profileRoot, '-LayoutPath', $ws.Layout,
+            '-OutputRoot', $ws.Out, '-TargetPath', $ws.Stick, '-Model', 'm1')
+        $run = Invoke-ScriptChild -ArgumentList $arguments
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Flat | Should -Match 'FAT32|root'
+        $run.Flat | Should -Match ([regex]::Escape([IO.Path]::GetPathRoot($ws.Stick)))
+        (Join-Path $ws.Out 'fixture') | Should -Not -Exist
+        @(Get-ChildItem -LiteralPath $ws.Root -Recurse -Force -Filter 'firmware-manifest.json') | Should -BeNullOrEmpty
+    }
+    It 'stops red with FW-05 when the diagnostics capture is missing' {
+        $ws = New-TestWorkspace
+        $run = Invoke-ScriptChild -ArgumentList ((Get-ChildBase -Workspace $ws) + @('-Model', 'm1'))
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Output | Should -Match 'FW-05'
+        (Join-Path $ws.Stick 'firmware-manifest.json') | Should -Not -Exist
+        (Join-Path $ws.Stick 'READY') | Should -Not -Exist
+    }
+    It 'names the file of an altered capture and withdraws READY' {
+        $ws = New-TestWorkspace
+        $arguments = (Get-ChildBase -Workspace $ws) + @('-Model', 'm1', '-DiagnosticsSource', $ws.Capture)
+        $good = Invoke-ScriptChild -ArgumentList ($arguments + '-NewDiagnosticsSnapshot')
+        $good.ExitCode | Should -Be 0 -Because $good.Output
+        (Join-Path $ws.Stick 'READY') | Should -Exist
+        $file = Join-Path $ws.Capture 'EFI\FX\a.efi'
+        $bytes = [IO.File]::ReadAllBytes($file)
+        $bytes[0] = $bytes[0] -bxor 1
+        [IO.File]::WriteAllBytes($file, $bytes)
+        $run = Invoke-ScriptChild -ArgumentList $arguments
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Output | Should -Match '\[FAIL\]'
+        $run.Flat | Should -Match ([regex]::Escape('EFI\FX\a.efi'))
+        $run.Flat | Should -Match 'differs from the recorded snapshot'
+        (Join-Path $ws.Stick 'READY') | Should -Not -Exist
+    }
+    It 'fails loudly for the wrong-folder incident and passes again when the file is back' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $build = Invoke-ScriptChild -ArgumentList ((Get-ChildBase -Workspace $ws) + @('-Model', 'm1'))
+        $build.ExitCode | Should -Be 0 -Because $build.Output
+        $right = Join-Path $ws.Stick 'Vendor\BIOS\New\F00_000100.bin'
+        $wrong = Join-Path $ws.Stick 'Vendor\BIOS\Other\F00_000100.bin'
+        $null = New-Item -Path (Split-Path $wrong -Parent) -ItemType Directory -Force
+        Move-Item -LiteralPath $right -Destination $wrong
+        $check = @('-ValidateOnly', '-TargetPath', $ws.Stick, '-AllowFolder')
+        $bad = Invoke-ScriptChild -ArgumentList $check
+        $bad.ExitCode | Should -Be 1 -Because $bad.Output
+        $bad.Output | Should -Match '\[FAIL\]'
+        $bad.Output | Should -Match 'F00_000100\.bin'
+        Move-Item -LiteralPath $wrong -Destination $right
+        $good = Invoke-ScriptChild -ArgumentList $check
+        $good.ExitCode | Should -Be 0 -Because $good.Output
+    }
+    It 'works without -OutputRoot: the default resolves under a real 5.1 child (preview only, nothing written)' {
+        $ws = New-TestWorkspace
+        $arguments = @('-Vendor', 'Fixture', '-VendorRoot', $script:vendorRoot, '-ProfileRoot', $script:profileRoot, '-LayoutPath', $ws.Layout,
+            '-TargetPath', $ws.Stick, '-AllowFolder', '-Model', 'm1', '-WhatIf')
+        $run = Invoke-ScriptChild -ArgumentList $arguments
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        $run.Output | Should -Match 'nothing was staged'
+        @(Get-ChildItem -LiteralPath $ws.Stick -Force) | Should -BeNullOrEmpty
+    }
+    It 'fails -ValidateOnly on a folder with no manifest and names firmware-manifest.json' {
+        $ws = New-TestWorkspace
+        $run = Invoke-ScriptChild -ArgumentList @('-ValidateOnly', '-TargetPath', $ws.Stick, '-AllowFolder')
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Output | Should -Match 'firmware-manifest\.json'
+    }
+    It 'lists the available ids for an unknown model' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $run = Invoke-ScriptChild -ArgumentList ((Get-ChildBase -Workspace $ws) + @('-Model', 'm9'))
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Flat | Should -Match 'm1'
+        $run.Flat | Should -Match 'm2'
+    }
+    It 'fails and names -Model when it cannot ask for it' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $run = Invoke-ScriptChild -ArgumentList (Get-ChildBase -Workspace $ws) -NonInteractive -TimeoutSeconds 120
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Flat | Should -Match '-Model'
+    }
+    It 'takes vendor, models and target from standard input when they are omitted' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $answer = "1`r`n1,2`r`n$($ws.Stick)`r`n"
+        $run = Invoke-ScriptChild -ArgumentList (Get-ChildBase -Workspace $ws -NoPrompt) -InputText $answer -TimeoutSeconds 120
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        @((Read-StickManifest -Stick $ws.Stick).models | ForEach-Object { $_.modelId }) | Should -Be @('m1', 'm2')
+    }
+    It 'exits non-zero instead of hanging when the answers run out' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $run = Invoke-ScriptChild -ArgumentList (Get-ChildBase -Workspace $ws -NoPrompt) -InputText "1`r`n1,2`r`n" -TimeoutSeconds 120
+        $run.ExitCode | Should -Be 1 -Because $run.Output
+        $run.Output | Should -Match '\[FAIL\]'
+        (Join-Path $ws.Stick 'READY') | Should -Not -Exist
+    }
+    It 'fails on a stale file, naming it, and succeeds with -RemoveStale' {
+        $ws = New-TestWorkspace
+        Write-SimpleLayout -Path $ws.Layout
+        $arguments = (Get-ChildBase -Workspace $ws) + @('-Model', 'm1')
+        (Invoke-ScriptChild -ArgumentList $arguments).ExitCode | Should -Be 0
+        [IO.File]::WriteAllText((Join-Path $ws.Stick 'Vendor\BIOS\New\old.bin'), 'old', [Text.Encoding]::ASCII)
+        $blocked = Invoke-ScriptChild -ArgumentList $arguments
+        $blocked.ExitCode | Should -Be 1 -Because $blocked.Output
+        $blocked.Output | Should -Match 'old\.bin'
+        $cleaned = Invoke-ScriptChild -ArgumentList ($arguments + '-RemoveStale')
+        $cleaned.ExitCode | Should -Be 0 -Because $cleaned.Output
+    }
+}
+
+Describe 'Build-ToolsStick public surface' {
+    BeforeAll {
+        $script:masterScript | Should -Exist
+        $script:ast = Read-ScriptAst
+        $script:ast | Should -Not -BeNullOrEmpty
+    }
+    It 'copies, deletes, writes and runs nothing itself' {
+        $forbidden = 'Copy-Item', 'Remove-Item', 'Set-Content', 'Add-Content', 'Out-File', 'Start-Process', 'Invoke-Expression', 'Format-Volume', 'Write-Host'
+        $used = $script:ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true) |
+            ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in $forbidden }
+        $used | Should -BeNullOrEmpty
+    }
+    It 'asks questions only inside its two prompt helpers, and no core or vendor file asks any' {
+        $reads = $script:ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Read-Host' }, $true)
+        @($reads).Count | Should -BeGreaterThan 0
+        foreach ($read in $reads) {
+            $parent = $read.Parent
+            while ($parent -and $parent -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $parent = $parent.Parent }
+            $parent.Name | Should -BeIn 'Select-BuildChoice', 'Read-BuildTarget'
+        }
+        $folders = (Join-Path $PSScriptRoot '..\kit\core'), (Join-Path $PSScriptRoot '..\kit\vendors'), (Join-Path $PSScriptRoot '..\builder\vendors')
+        $others = Get-ChildItem -LiteralPath $folders -Recurse -File -Include '*.ps1', '*.psm1' |
+            Select-String -Pattern 'Read-Host' -SimpleMatch
+        @($others) | Should -BeNullOrEmpty
+    }
+    It 'declares exactly the documented parameters' {
+        $declared = @($script:ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+        $expected = 'Vendor', 'Model', 'TargetPath', 'DiagnosticsSource', 'CaptureName', 'NewDiagnosticsSnapshot', 'FlashModel', 'IncludeKit',
+        'RemoveStale', 'AllowFolder', 'ValidateOnly', 'OsVer', 'OutputRoot', 'VendorRoot', 'ProfileRoot', 'LayoutPath'
+        $declared | Should -Be $expected
+    }
+    It 'defaults -OutputRoot to the staging folder next to the repo, set in the body because 5.1 cannot do it in the param block' {
+        # With [CmdletBinding()] and -File, $PSScriptRoot is empty in a param default under Windows PowerShell 5.1.
+        $parameter = $script:ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'OutputRoot' }
+        $parameter.DefaultValue | Should -BeNullOrEmpty
+        $assignment = $script:ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$OutputRoot'
+            }, $true) | Where-Object { $_.Right.Extent.Text -eq "Join-Path `$PSScriptRoot '..\staging'" }
+        @($assignment).Count | Should -Be 1
+    }
+    It 'ends every run with exit code 0 or 1 only' {
+        $exits = $script:ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ExitStatementAst] }, $true)
+        @($exits).Count | Should -BeGreaterThan 0
+        foreach ($exit in $exits) { $exit.Pipeline.Extent.Text | Should -BeIn '0', '1' }
+    }
+    It 'documents every parameter and gives at least three examples' {
+        $help = Get-Help -Name $script:masterScript -Full
+        foreach ($name in 'Vendor', 'Model', 'TargetPath', 'DiagnosticsSource', 'CaptureName', 'NewDiagnosticsSnapshot', 'FlashModel', 'IncludeKit',
+            'RemoveStale', 'AllowFolder', 'ValidateOnly', 'OsVer', 'OutputRoot', 'VendorRoot', 'ProfileRoot', 'LayoutPath') {
+            $entry = $help.parameters.parameter | Where-Object { $_.name -eq $name }
+            $entry | Should -Not -BeNullOrEmpty -Because $name
+            (($entry.description | ForEach-Object { $_.Text }) -join '') | Should -Not -BeNullOrEmpty -Because $name
+        }
+        @($help.examples.example).Count | Should -BeGreaterOrEqual 3
+    }
+    It 'leaves the Build.cmd launcher on Build-DriverBaseline.ps1' {
+        $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Build.cmd') -Raw
+        $text | Should -Match ([regex]::Escape('builder\Build-DriverBaseline.ps1'))
+        $text | Should -Not -Match 'Build-ToolsStick'
     }
 }

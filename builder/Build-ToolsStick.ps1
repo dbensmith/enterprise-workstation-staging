@@ -118,7 +118,7 @@ param(
 
     [string]$OsVer,
 
-    [string]$OutputRoot = (Join-Path $PSScriptRoot '..\staging'),
+    [string]$OutputRoot,
 
     [string[]]$VendorRoot,
 
@@ -129,6 +129,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $InformationPreference = 'Continue'
+# The default is set here, not in the param block: Windows PowerShell 5.1 leaves $PSScriptRoot empty in the parameter
+# defaults of a script that has [CmdletBinding()] when it is started with -File, which would fail every run that does
+# not pass -OutputRoot.
+if (-not $OutputRoot) { $OutputRoot = Join-Path $PSScriptRoot '..\staging' }
 
 function ConvertTo-BuildFinding {
     # One finding in the shape Show-FirmwareStageFinding prints.

@@ -556,7 +556,19 @@ function Publish-FirmwareStage {
     }
     if ($staged.Count -eq 0) { throw 'The layout has no default group to stage' }
     if ($IncludeKit -and -not (Test-Path -LiteralPath $KitRoot -PathType Container)) { throw "KitRoot $KitRoot not found" }
-    $plan = Get-KitStagePlan -Layout $Layout -Model $models -StagedGroup $staged -CapturePath $CapturePath
+    try {
+        $plan = Get-KitStagePlan -Layout $Layout -Model $models -StagedGroup $staged -CapturePath $CapturePath
+    }
+    catch {
+        # A run refused before it writes anything must not leave the READY of an earlier run saying the stick is good.
+        # Only a file that holds a manifest hash (a marker this function wrote) is removed.
+        $earlier = Join-Path -Path $target -ChildPath 'READY'
+        if (-not $WhatIfPreference -and (Test-Path -LiteralPath $earlier -PathType Leaf) -and
+            ([string](Get-Content -LiteralPath $earlier -TotalCount 1)).Trim() -cmatch '^[0-9a-f]{64}$') {
+            Remove-Item -LiteralPath $earlier -Force
+        }
+        throw
+    }
 
     $targetFinding = @(Test-FirmwareTarget -Path $target -AllowFolder:$AllowFolder | Where-Object { $_.Status -eq 'Fail' })
     if ($targetFinding.Count -gt 0) { throw ($targetFinding.Message -join '; ') }

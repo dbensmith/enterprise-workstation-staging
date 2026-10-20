@@ -252,6 +252,31 @@ Describe 'Publish-FirmwareStage tracer' {
         @(Get-ChildItem -LiteralPath $stick -Force) | Should -BeNullOrEmpty
     }
 
+    It 'removes a READY from an earlier run when the new run is refused before it writes anything' {
+        $fixture = Get-KitFirmwareLayout -Path (Join-Path $PSScriptRoot 'fixtures\firmware\fixture.layout.psd1')
+        $stick = New-StickPath
+        $null = Publish-FirmwareStage -Layout $script:layout -Model @($script:m1) -TargetPath $stick -AllowFolder
+        (Join-Path $stick 'READY') | Should -Exist
+        { Publish-FirmwareStage -Layout $fixture -Model @($script:m1) -TargetPath $stick -AllowFolder } | Should -Throw 'FW-05*'
+        (Join-Path $stick 'READY') | Should -Not -Exist
+    }
+
+    It 'keeps a READY file that holds no manifest hash when the run is refused' {
+        $fixture = Get-KitFirmwareLayout -Path (Join-Path $PSScriptRoot 'fixtures\firmware\fixture.layout.psd1')
+        $stick = New-StickPath
+        [IO.File]::WriteAllText((Join-Path $stick 'READY'), 'not ours', [Text.Encoding]::ASCII)
+        { Publish-FirmwareStage -Layout $fixture -Model @($script:m1) -TargetPath $stick -AllowFolder } | Should -Throw 'FW-05*'
+        (Join-Path $stick 'READY') | Should -Exist
+    }
+
+    It 'leaves the READY of an earlier run alone under -WhatIf when the run would be refused' {
+        $fixture = Get-KitFirmwareLayout -Path (Join-Path $PSScriptRoot 'fixtures\firmware\fixture.layout.psd1')
+        $stick = New-StickPath
+        $null = Publish-FirmwareStage -Layout $script:layout -Model @($script:m1) -TargetPath $stick -AllowFolder
+        { Publish-FirmwareStage -Layout $fixture -Model @($script:m1) -TargetPath $stick -AllowFolder -WhatIf } | Should -Throw 'FW-05*'
+        (Join-Path $stick 'READY') | Should -Exist
+    }
+
     It 'returns no READY and keeps the Fail when the validator fails, and removes a READY from an earlier run' {
         $stick = New-StickPath
         $null = Publish-FirmwareStage -Layout $script:layout -Model @($script:m1) -TargetPath $stick -AllowFolder
