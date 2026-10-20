@@ -5,6 +5,10 @@
 # Kit.Core is offline-safe and supplies Get-KitProfile and Get-KitPackagePath.
 Import-Module (Join-Path $PSScriptRoot '..\..\..\kit\core\Kit.Core.psd1')
 
+# The HPCMSL release this kit was researched against. A builder that does not have HPCMSL yet installs exactly this
+# one from the PowerShell Gallery; an HPCMSL that is already installed is used as it is.
+$script:HPCMSLRequiredVersion = '1.9.0'
+
 function Select-OsRelease {
     <#
     .SYNOPSIS
@@ -114,15 +118,41 @@ function ConvertTo-ReturnCodeMap {
     $map
 }
 
+function Test-HPKitHPCMSLInstalled {
+    # True when HPCMSL is installed on this PC. A seam over the module list; tests mock it.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    [bool](Get-Module -ListAvailable -Name HPCMSL)
+}
+
+function Get-HPKitPowerShellGetVersion {
+    # The highest installed PowerShellGet version, or $null when there is none. A seam over the module list; tests mock it.
+    [CmdletBinding()]
+    [OutputType([version])]
+    param()
+
+    $module = Get-Module -ListAvailable -Name PowerShellGet | Sort-Object -Property Version -Descending | Select-Object -First 1
+    if ($module) { $module.Version }
+}
+
 function Initialize-HPCMSL {
     # Import HPCMSL, installing it from the PowerShell Gallery first when it is missing. Build operations
-    # call this lazily, so merely importing this module never needs HPCMSL.
+    # call this lazily, so merely importing this module never needs HPCMSL. The install is pinned to one release,
+    # and a PC whose PowerShellGet is too old to install it is told the fix before any install is tried.
     [CmdletBinding()]
     param()
 
-    if (Get-Module -ListAvailable -Name HPCMSL) {
+    if (Test-HPKitHPCMSLInstalled) {
         Import-Module HPCMSL
         return
+    }
+
+    $powerShellGet = Get-HPKitPowerShellGetVersion
+    if ($null -eq $powerShellGet -or $powerShellGet -lt [version]'2.0.0') {
+        $has = if ($null -eq $powerShellGet) { 'no PowerShellGet' } else { "PowerShellGet $powerShellGet" }
+        throw "HPCMSL is not installed and this PC has $has (2.0.0 or newer is needed to install it from the PowerShell Gallery). Run 'Install-Module PowerShellGet -Force' in an elevated session, open a new PowerShell window, then run this build again."
     }
 
     Write-Information 'Installing HPCMSL from the PowerShell Gallery...'
@@ -131,7 +161,7 @@ function Initialize-HPCMSL {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
     }
-    $install = @{ Name = 'HPCMSL'; Scope = 'AllUsers'; Force = $true }
+    $install = @{ Name = 'HPCMSL'; RequiredVersion = $script:HPCMSLRequiredVersion; Scope = 'AllUsers'; Force = $true }
     # -AcceptLicense only exists in PowerShellGet 2.x+; inbox 1.0.0.1 on 5.1 lacks it.
     if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) { $install.AcceptLicense = $true }
     Install-Module @install
@@ -165,6 +195,27 @@ function Reset-HPKitDirectory {
     if (-not $PSCmdlet.ShouldProcess($Path, 'Recreate empty directory')) { return }
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
     $null = New-Item -Path $Path -ItemType Directory -Force
+}
+
+function Test-HPKitSoftpaqCache {
+    # True when a SoftPaq folder from an earlier build can be reused: its <id>.exe hashes to the value HP's CVA gives
+    # (compared without regard to case) and at least one extracted file sits beside it. Anything else, including a
+    # CVA with no hash, means the folder is emptied and the download is repeated.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$Id,
+        [AllowEmptyString()][string]$ExpectedSha256 = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) { return $false }
+    $executable = Join-Path -Path $Directory -ChildPath "$Id.exe"
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { return $false }
+    if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $ExpectedSha256.Trim()) { return $false }
+    $executableFullName = (Get-Item -LiteralPath $executable -Force).FullName
+    $extracted = @(Get-ChildItem -LiteralPath $Directory -Recurse -File -Force | Where-Object { $_.FullName -ne $executableFullName })
+    $extracted.Count -gt 0
 }
 
 function ConvertTo-HPKitSoftpaqSummary {
@@ -329,6 +380,11 @@ function Save-HPKitFirmware {
     .SYNOPSIS
     Download and extract the model's BIOS and firmware SoftPaqs (GetFirmware operation).
 
+    .DESCRIPTION
+    A SoftPaq folder from an earlier build is reused when its <id>.exe hashes to the SHA-256 in HP's CVA and extracted
+    files sit beside it; otherwise the folder is emptied and the SoftPaq is downloaded again. Folders of SoftPaqs that
+    are no longer selected are removed. Under -WhatIf nothing is removed and nothing is downloaded.
+
     .PARAMETER ModelProfile
     Model profile from Get-KitProfile.
 
@@ -361,17 +417,34 @@ function Save-HPKitFirmware {
 
     $selection = Select-BaselineSoftpaq -Softpaq @(Get-HPSoftpaqList @query -Category BIOS, Firmware) -Exclude $ModelProfile.FirmwareExclude
     $firmwareDir = Join-Path $packageDir 'Firmware'
-    Reset-HPKitDirectory -Path $firmwareDir
+
+    # A SoftPaq folder that is no longer selected is removed; the ones still selected are kept so a verified download
+    # can be reused (the Firmware folder is not emptied as a whole any more).
+    $selectedId = @($selection.Included | ForEach-Object { [string]$_.id })
+    if ($PSCmdlet.ShouldProcess($firmwareDir, 'Remove superseded firmware folders')) {
+        $null = New-Item -Path $firmwareDir -ItemType Directory -Force
+        foreach ($folder in @(Get-ChildItem -LiteralPath $firmwareDir -Directory -Force)) {
+            if ($selectedId -notcontains $folder.Name) { Remove-Item -LiteralPath $folder.FullName -Recurse -Force }
+        }
+    }
 
     $firmware = @(foreach ($sp in $selection.Included) {
             $number = $sp.id -replace '^sp', ''
             $extractDir = Join-Path $firmwareDir $sp.id
-            if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
-                # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
-                $null = Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
+            $meta = Get-HPSoftpaqMetadata -Number $number
+
+            # The CVA SHA-256 is HP's own hash of the SoftPaq executable: the cache is trusted only when it matches.
+            if (Test-HPKitSoftpaqCache -Directory $extractDir -Id $sp.id -ExpectedSha256 ([string]$meta.Softpaq.SoftPaqSHA256)) {
+                Write-Information "$($sp.id): reusing the cached download (SHA-256 matches HP's CVA)"
+            }
+            else {
+                Reset-HPKitDirectory -Path $extractDir
+                if ($PSCmdlet.ShouldProcess($sp.id, "Download + extract '$($sp.Name)' $($sp.Version)")) {
+                    # With -DestinationPath, HPCMSL also saves the .exe there (it joins -SaveAs onto it), so no -SaveAs.
+                    $null = Get-HPSoftpaq -Number $number -Overwrite yes -Quiet -Extract -DestinationPath $extractDir
+                }
             }
 
-            $meta = Get-HPSoftpaqMetadata -Number $number
             $silent = $meta.'Install Execution'.SilentInstall
             $entry = $sp | ConvertTo-HPKitSoftpaqSummary
             $entry | Add-Member -NotePropertyMembers ([ordered]@{

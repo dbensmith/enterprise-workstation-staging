@@ -12,6 +12,9 @@ BeforeAll {
         $spec = [ordered]@{
             'Get-HPBIOSUpdates'     = 'param($Platform, [switch]$Latest, [switch]$All)'
             'Get-HPSoftpaqMetadata' = 'param($Number)'
+            'Get-HPDeviceDetails'   = 'param($Platform, [switch]$OSList)'
+            'Get-HPSoftpaqList'     = 'param($Platform, $Os, $OsVer, [switch]$Quiet, [string[]]$Category)'
+            'Get-HPSoftpaq'         = 'param($Number, $Overwrite, [switch]$Quiet, [switch]$Extract, $DestinationPath)'
         }
         $source = foreach ($name in $spec.Keys) {
             "function $name { $($spec[$name]); process { [pscustomobject]`$PSBoundParameters } }"
@@ -87,6 +90,28 @@ BeforeAll {
         }
         if ($Dependency) { $cva['Dependency'] = $Dependency }
         [pscustomobject]$cva
+    }
+
+    # The SHA-256 of a text as bytes, in upper case as Get-FileHash and the HP CVA write it.
+    function Get-TextSha256 {
+        [CmdletBinding()]
+        [OutputType([string])]
+        param([Parameter(Mandatory)][string]$Text)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            -join ($sha.ComputeHash([Text.Encoding]::ASCII.GetBytes($Text)) | ForEach-Object { $_.ToString('X2') })
+        }
+        finally {
+            $sha.Dispose()
+        }
+    }
+
+    # The part of a GetFirmware result that a second, reusing run must reproduce, as text to compare.
+    function Get-FirmwareShape {
+        [CmdletBinding()]
+        [OutputType([string])]
+        param([Parameter(Mandatory)][object]$Result)
+        $Result.Firmware | Select-Object -Property Id, Path, AutoInstall, SilentInstall, ReturnCodes | ConvertTo-Json -Depth 6
     }
 
     # The message a script block throws, or $null when it does not throw.
@@ -591,6 +616,225 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             foreach ($path in $g6Fallback.RelativePath) { $path | Should -BeLike 'firmware\hp\8549\*' }
             @($g5Fallback.RelativePath | Where-Object { $g6Fallback.RelativePath -contains $_ }) | Should -HaveCount 0
         }
+    }
+}
+
+Describe 'Save-HPKitFirmware download reuse' {
+    BeforeAll {
+        $script:g6 = Get-KitProfile -Vendor HP -ModelId 840-g6
+        Import-HPCMSLStandIn
+        $script:osList = @([pscustomobject]@{ OperatingSystem = 'Microsoft Windows 11'; OperatingSystemRelease = '24H2'; BuildNumber = '26100' })
+        $script:firmware = @(
+            [pscustomobject]@{ id = 'sp174025'; Name = 'HP Elite/ProBook Notebook System BIOS (R70)'; Version = '01.36.00'; Category = 'BIOS'; ReleaseDate = '2025-01-01'; SSM = $true }
+            [pscustomobject]@{ id = 'sp170000'; Name = 'Samsung SSD Firmware'; Version = '1.0'; Category = 'Firmware'; ReleaseDate = '2024-01-01'; SSM = $false }
+        )
+    }
+    AfterAll {
+        Remove-Module -Name HPCMSL -Force -ErrorAction SilentlyContinue
+    }
+    BeforeEach {
+        # The CVA hash of each SoftPaq is the SHA-256 of the exact bytes the mocked download writes.
+        $script:metadata = @{
+            '174025' = [pscustomobject]@{
+                Softpaq             = @{ SoftPaqSHA256 = Get-TextSha256 -Text 'fake softpaq 174025' }
+                'Install Execution' = @{ SilentInstall = '"HpFirmwareUpdRec.exe" -r -b -s' }
+                General             = @{ SystemMustBeRebooted = '1' }
+                Devices             = @{ '_body' = @{} }
+                ReturnCode          = @{ '3010:SUCCESS:REBOOT' = 'A restart is required.'; '290:CANCEL:NOREBOOT' = 'Bitlocker is enabled.' }
+            }
+            '170000' = [pscustomobject]@{
+                Softpaq             = @{ SoftPaqSHA256 = Get-TextSha256 -Text 'fake softpaq 170000' }
+                'Install Execution' = @{ SilentInstall = 'setup.exe /s' }
+                General             = @{ SystemMustBeRebooted = '0' }
+                Devices             = @{ '_body' = @{} }
+                ReturnCode          = @{}
+            }
+        }
+        Mock Initialize-HPCMSL -ModuleName HP.Build {}
+        Mock Test-HPKitElevation -ModuleName HP.Build { $true }
+        Mock Get-HPDeviceDetails -ModuleName HP.Build { $script:osList }
+        Mock Get-HPSoftpaqList -ModuleName HP.Build { $script:firmware }
+        Mock Get-HPSoftpaqMetadata -ModuleName HP.Build { $script:metadata["$Number"] }
+        Mock Get-HPSoftpaq -ModuleName HP.Build {
+            $null = New-Item -Path $DestinationPath -ItemType Directory -Force
+            [IO.File]::WriteAllBytes((Join-Path $DestinationPath "sp$Number.exe"), [Text.Encoding]::ASCII.GetBytes("fake softpaq $Number"))
+            [IO.File]::WriteAllBytes((Join-Path $DestinationPath 'extracted.dat'), [Text.Encoding]::ASCII.GetBytes("fake payload $Number"))
+        }
+        $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $script:firmwareDir = Join-Path $script:root 'hp\840-g6\win11-24H2\Firmware'
+    }
+
+    It 'downloads each SoftPaq once on the first run and reuses both on the second' {
+        $first = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 2
+        $second = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root -InformationVariable info
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 2
+        Get-FirmwareShape -Result $second | Should -Be (Get-FirmwareShape -Result $first)
+        $line = @($info | ForEach-Object { [string]$_.MessageData })
+        @($line | Where-Object { $_ -like '*reusing*' }) | Should -HaveCount 2
+    }
+
+    It 'keeps the folder of a selected SoftPaq and its extracted files when it reuses it' {
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        Join-Path $script:firmwareDir 'sp174025\sp174025.exe' | Should -Exist
+        Join-Path $script:firmwareDir 'sp174025\extracted.dat' | Should -Exist
+    }
+
+    It 'downloads again, into an emptied folder, when the cached executable differs from the CVA hash' {
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        [IO.File]::WriteAllBytes((Join-Path $script:firmwareDir 'sp174025\sp174025.exe'), [Text.Encoding]::ASCII.GetBytes('tampered'))
+        [IO.File]::WriteAllText((Join-Path $script:firmwareDir 'sp174025\stale.txt'), 'stale', [Text.Encoding]::ASCII)
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 2 -ParameterFilter { $Number -eq '174025' }
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Number -eq '170000' }
+        Test-Path -LiteralPath (Join-Path $script:firmwareDir 'sp174025\stale.txt') | Should -BeFalse
+        (Get-FileHash -LiteralPath (Join-Path $script:firmwareDir 'sp174025\sp174025.exe') -Algorithm SHA256).Hash | Should -Be $script:metadata['174025'].Softpaq.SoftPaqSHA256
+    }
+
+    It 'always downloads when the CVA has no Softpaq section' {
+        $script:metadata['174025'] = [pscustomobject]@{
+            'Install Execution' = @{ SilentInstall = '"HpFirmwareUpdRec.exe" -r -b -s' }
+            General             = @{ SystemMustBeRebooted = '1' }
+            Devices             = @{ '_body' = @{} }
+            ReturnCode          = @{}
+        }
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 2 -ParameterFilter { $Number -eq '174025' }
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Number -eq '170000' }
+    }
+
+    It 'removes the folder of a SoftPaq that is no longer selected' {
+        $old = Join-Path $script:firmwareDir 'sp111111'
+        $null = New-Item -Path $old -ItemType Directory -Force
+        [IO.File]::WriteAllText((Join-Path $old 'old.txt'), 'old', [Text.Encoding]::ASCII)
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root
+        Test-Path -LiteralPath $old | Should -BeFalse
+        Join-Path $script:firmwareDir 'sp174025' | Should -Exist
+        Join-Path $script:firmwareDir 'sp170000' | Should -Exist
+    }
+
+    It 'removes nothing and downloads nothing under -WhatIf' {
+        $old = Join-Path $script:firmwareDir 'sp111111'
+        $null = New-Item -Path $old -ItemType Directory -Force
+        [IO.File]::WriteAllText((Join-Path $old 'old.txt'), 'old', [Text.Encoding]::ASCII)
+        $null = Save-HPKitFirmware -ModelProfile $script:g6 -OsVer '' -OutputPath $script:root -WhatIf
+        Should -Invoke Get-HPSoftpaq -ModuleName HP.Build -Exactly 0
+        Join-Path $old 'old.txt' | Should -Exist
+        Join-Path $script:firmwareDir 'sp174025' | Should -Not -Exist
+    }
+}
+
+Describe 'Test-HPKitSoftpaqCache' {
+    BeforeEach {
+        $script:dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path $script:dir -ItemType Directory
+        $exe = Join-Path $script:dir 'sp1.exe'
+        [IO.File]::WriteAllBytes($exe, [Text.Encoding]::ASCII.GetBytes('exe bytes'))
+        $script:hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+    }
+
+    It 'is false for an empty expected hash, even with extracted files' {
+        [IO.File]::WriteAllText((Join-Path $script:dir 'a.dat'), 'a', [Text.Encoding]::ASCII)
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 ''
+        } | Should -BeFalse
+    }
+
+    It 'is false when the executable is missing' {
+        [IO.File]::WriteAllText((Join-Path $script:dir 'a.dat'), 'a', [Text.Encoding]::ASCII)
+        Remove-Item -LiteralPath (Join-Path $script:dir 'sp1.exe')
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir; Hash = $script:hash } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 $Hash
+        } | Should -BeFalse
+    }
+
+    It 'is false when the executable hashes to another value' {
+        [IO.File]::WriteAllText((Join-Path $script:dir 'a.dat'), 'a', [Text.Encoding]::ASCII)
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir; Hash = ('0' * 64) } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 $Hash
+        } | Should -BeFalse
+    }
+
+    It 'is false when the folder holds only the executable' {
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir; Hash = $script:hash } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 $Hash
+        } | Should -BeFalse
+    }
+
+    It 'is true when the hash matches in either case and another file exists' {
+        $null = New-Item -Path (Join-Path $script:dir 'data') -ItemType Directory
+        [IO.File]::WriteAllText((Join-Path $script:dir 'data\a.dat'), 'a', [Text.Encoding]::ASCII)
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir; Hash = $script:hash } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 $Hash
+        } | Should -BeTrue
+        InModuleScope HP.Build -Parameters @{ Dir = $script:dir; Hash = $script:hash.ToLowerInvariant() } {
+            Test-HPKitSoftpaqCache -Directory $Dir -Id sp1 -ExpectedSha256 $Hash
+        } | Should -BeTrue
+    }
+}
+
+Describe 'Initialize-HPCMSL' {
+    BeforeAll {
+        # Install-Module and Install-PackageProvider belong to PowerShellGet and PackageManagement, which the test run may
+        # not find, and Pester can only mock a command that exists. Stand-ins with the same names and parameters, generated
+        # from this table, make them mockable; nothing is installed.
+        $spec = [ordered]@{
+            'Install-Module'          = 'param($Name, $RequiredVersion, $Scope, [switch]$Force, [switch]$AcceptLicense)'
+            'Install-PackageProvider' = 'param($Name, $MinimumVersion, [switch]$Force)'
+        }
+        $source = foreach ($name in $spec.Keys) {
+            "function $name { $($spec[$name]); process { [pscustomobject]`$PSBoundParameters } }"
+        }
+        $null = New-Module -Name PSGetStandIn -ScriptBlock ([scriptblock]::Create($source -join "`n")) | Import-Module -Global -Force
+    }
+    AfterAll {
+        Remove-Module -Name PSGetStandIn -Force -ErrorAction SilentlyContinue
+    }
+    BeforeEach {
+        $script:installed = $true
+        $script:powerShellGet = [version]'2.2.5'
+        Mock Test-HPKitHPCMSLInstalled -ModuleName HP.Build { $script:installed }
+        Mock Get-HPKitPowerShellGetVersion -ModuleName HP.Build { $script:powerShellGet }
+        Mock Import-Module -ModuleName HP.Build {}
+        Mock Install-Module -ModuleName HP.Build {}
+        Mock Install-PackageProvider -ModuleName HP.Build {}
+    }
+
+    It 'imports an installed HPCMSL and neither probes PowerShellGet nor installs' {
+        InModuleScope HP.Build { Initialize-HPCMSL }
+        Should -Invoke Import-Module -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Name -eq 'HPCMSL' }
+        Should -Invoke Get-HPKitPowerShellGetVersion -ModuleName HP.Build -Exactly 0
+        Should -Invoke Install-Module -ModuleName HP.Build -Exactly 0
+    }
+
+    It 'stops with the fix, before any install, when PowerShellGet is older than 2.0.0' {
+        $script:installed = $false
+        $script:powerShellGet = [version]'1.0.0.1'
+        $message = Get-ThrownMessage -Action { InModuleScope HP.Build { Initialize-HPCMSL } }
+        $message | Should -BeLike '*PowerShellGet*'
+        $message | Should -BeLike '*1.0.0.1*'
+        $message | Should -BeLike "*Install-Module PowerShellGet -Force*"
+        Should -Invoke Install-Module -ModuleName HP.Build -Exactly 0
+        Should -Invoke Install-PackageProvider -ModuleName HP.Build -Exactly 0
+        Should -Invoke Import-Module -ModuleName HP.Build -Exactly 0
+    }
+
+    It 'treats a missing PowerShellGet as too old' {
+        $script:installed = $false
+        $script:powerShellGet = $null
+        $message = Get-ThrownMessage -Action { InModuleScope HP.Build { Initialize-HPCMSL } }
+        $message | Should -BeLike '*no PowerShellGet*'
+        $message | Should -BeLike "*Install-Module PowerShellGet -Force*"
+        Should -Invoke Install-Module -ModuleName HP.Build -Exactly 0
+    }
+
+    It 'installs HPCMSL pinned to 1.9.0 and then imports it when PowerShellGet is 2.0.0 or newer' {
+        $script:installed = $false
+        InModuleScope HP.Build { Initialize-HPCMSL }
+        Should -Invoke Install-Module -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Name -eq 'HPCMSL' -and $RequiredVersion -eq '1.9.0' }
+        Should -Invoke Import-Module -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Name -eq 'HPCMSL' }
     }
 }
 
