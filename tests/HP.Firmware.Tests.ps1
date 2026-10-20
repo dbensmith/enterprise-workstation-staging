@@ -18,8 +18,10 @@ BeforeAll {
         $null = New-Module -Name HPCMSL -ScriptBlock ([scriptblock]::Create($source -join "`n")) | Import-Module -Global -Force
     }
 
-    # Write a fake SoftPaq package the way the firmware stage leaves it, with one image made of run-time bytes.
-    # Returns the package folder, the image path and the image hashes (upper case, as Get-FileHash writes them).
+    # Write a fake SoftPaq package the way the firmware stage leaves it: one image and the flash tool files around it,
+    # all made of run-time bytes. -PasswordFile adds a BIOS password file that the fallback must never take.
+    # Returns the package folder, the SoftPaq folder, the image path and hashes (upper case, as Get-FileHash writes
+    # them) and the SoftPaq executable path and hash.
     function Write-FakeBiosPackage {
         [CmdletBinding()]
         [OutputType([pscustomobject])]
@@ -28,18 +30,30 @@ BeforeAll {
             [Parameter(Mandatory)][string]$ModelId,
             [Parameter(Mandatory)][string]$OsFolder,
             [Parameter(Mandatory)][string]$SoftPaq,
-            [Parameter(Mandatory)][string]$Bin
+            [Parameter(Mandatory)][string]$Bin,
+            [switch]$PasswordFile
         )
         $package = Join-Path $Root "hp\$ModelId\$OsFolder"
         $folder = Join-Path $package "Firmware\$SoftPaq"
-        $null = New-Item -Path $folder -ItemType Directory -Force
+        $null = New-Item -Path (Join-Path $folder 'data') -ItemType Directory -Force
         $image = Join-Path $folder $Bin
         [IO.File]::WriteAllBytes($image, [Text.Encoding]::ASCII.GetBytes("fake bios image $ModelId $Bin"))
+        $exe = Join-Path $folder "$SoftPaq.exe"
+        [IO.File]::WriteAllBytes($exe, [Text.Encoding]::ASCII.GetBytes("fake softpaq executable $SoftPaq"))
+        foreach ($name in 'HpFirmwareUpdRec64.exe', 'HpFirmwareUpdRec.txt', 'contents.txt', 'Bios Flash.htm', 'data\HpFirmwareUpdRec.cva') {
+            [IO.File]::WriteAllBytes((Join-Path $folder $name), [Text.Encoding]::ASCII.GetBytes("fake $name of $ModelId"))
+        }
+        if ($PasswordFile) {
+            [IO.File]::WriteAllBytes((Join-Path $folder 'HPQPswd1.bin'), [Text.Encoding]::ASCII.GetBytes("fake password file of $ModelId"))
+        }
         [pscustomobject]@{
             PackagePath = $package
+            Folder      = $folder
             Image       = $image
             Sha256      = (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash
             Sha384      = (Get-FileHash -LiteralPath $image -Algorithm SHA384).Hash
+            Exe         = $exe
+            ExeSha256   = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
         }
     }
 
@@ -75,19 +89,19 @@ Describe 'HP USB flash layout file' {
         $script:layout.FileSystem | Should -Be 'FAT32'
     }
 
-    It 'has seven groups in candidate order with the source kinds of the research default' {
-        @($script:layout.Groups.Id) | Should -Be @('F10-New', 'F10-New-ESP', 'Diag-Current', 'Diag-Current-ESP', 'Diag-Tree', 'Esc-DEVFW', 'Esc-DEVFW-ESP')
+    It 'has eight groups in candidate order with the source kinds of the research default' {
+        @($script:layout.Groups.Id) | Should -Be @('F10-New', 'F10-New-ESP', 'Diag-Current', 'Diag-Current-ESP', 'Diag-Tree', 'Esc-DEVFW', 'Esc-DEVFW-ESP', 'Win-Fallback')
         @($script:layout.Groups.Folder) | Should -Be @(
             'Hewlett-Packard\BIOS\New', 'EFI\HP\BIOS\New', 'Hewlett-Packard\BIOS\Current', 'EFI\HP\BIOS\Current'
-            'EFI\HP', 'HP\DEVFW', 'EFI\HP\DEVFW'
+            'EFI\HP', 'HP\DEVFW', 'EFI\HP\DEVFW', 'firmware\hp\{Platform}'
         )
-        @($script:layout.Groups.SourceKind) | Should -Be @('BiosImage', 'BiosImage', 'BiosImage', 'BiosImage', 'Captured', 'FlashImage', 'FlashImage')
-        @($script:layout.Groups.Default) | Should -Be @($true, $true, $true, $true, $true, $false, $false)
-        @($script:layout.Groups.Closed) | Should -Be @($true, $true, $true, $true, $false, $true, $true)
+        @($script:layout.Groups.SourceKind) | Should -Be @('BiosImage', 'BiosImage', 'BiosImage', 'BiosImage', 'Captured', 'FlashImage', 'FlashImage', 'WindowsFlashTool')
+        @($script:layout.Groups.Default) | Should -Be @($true, $true, $true, $true, $true, $false, $false, $true)
+        @($script:layout.Groups.Closed) | Should -Be @($true, $true, $true, $true, $false, $true, $true, $true)
     }
 
     It 'gives every group its own Verified block that is not verified' {
-        @($script:layout.Groups) | Should -HaveCount 7
+        @($script:layout.Groups) | Should -HaveCount 8
         foreach ($group in $script:layout.Groups) {
             $group.Verified.Status | Should -BeFalse
             @($group.Verified.Model) | Should -HaveCount 0
@@ -157,8 +171,9 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             Should -Invoke Get-HPBIOSUpdates -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Platform -eq '8549' -and $All }
         }
 
-        It 'lists the six BIOS and flash image entries in layout order and none for the captured tree' {
-            @($script:result.Entries.RelativePath) | Should -Be @(
+        It 'lists the six BIOS and flash image entries in layout order, then the fallback files, and none for the captured tree' {
+            $image = @($script:result.Entries | Where-Object Group -NE 'Win-Fallback')
+            @($image.RelativePath) | Should -Be @(
                 'Hewlett-Packard\BIOS\New\R70_013600.bin'
                 'EFI\HP\BIOS\New\R70_013600.bin'
                 'Hewlett-Packard\BIOS\Current\R70_013600.bin'
@@ -166,23 +181,80 @@ Describe 'Get-HPKitFirmwareStickLayout' {
                 'HP\DEVFW\firmware.bin'
                 'EFI\HP\DEVFW\firmware.bin'
             )
-            @($script:result.Entries.Group) | Should -Be @('F10-New', 'F10-New-ESP', 'Diag-Current', 'Diag-Current-ESP', 'Esc-DEVFW', 'Esc-DEVFW-ESP')
+            @($image.Group) | Should -Be @('F10-New', 'F10-New-ESP', 'Diag-Current', 'Diag-Current-ESP', 'Esc-DEVFW', 'Esc-DEVFW-ESP')
+            @($script:result.Entries) | Should -HaveCount 12
+            @($script:result.Entries.Group | Select-Object -Last 6 | Select-Object -Unique) | Should -Be @('Win-Fallback')
         }
 
-        It 'points every entry at the package image with its size and lower case SHA-256' {
-            foreach ($entry in $script:result.Entries) {
+        It 'points every image entry at the package image with its size and lower case SHA-256' {
+            foreach ($entry in @($script:result.Entries | Where-Object Group -NE 'Win-Fallback')) {
                 $entry.SourcePath | Should -Be $script:pkg.Image
                 $entry.Size | Should -Be ([IO.FileInfo]$script:pkg.Image).Length
                 $entry.Sha256 | Should -BeExactly $script:pkg.Sha256.ToLowerInvariant()
             }
         }
 
-        It 'records the catalog SHA-384 in lower case as the vendor hash of every entry' {
-            foreach ($entry in $script:result.Entries) {
+        It 'records the catalog SHA-384 in lower case as the vendor hash of every image entry' {
+            foreach ($entry in @($script:result.Entries | Where-Object Group -NE 'Win-Fallback')) {
                 $entry.VendorHash.Algorithm | Should -Be 'SHA384'
                 $entry.VendorHash.Value | Should -BeExactly $script:pkg.Sha384.ToLowerInvariant()
                 $entry.VendorHash.Source | Should -Be 'Get-HPBIOSUpdates -All'
             }
+        }
+    }
+
+    Context 'the Windows flash fallback of the 840 G6' {
+        BeforeEach {
+            $script:pkg = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin -PasswordFile
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384)
+            $script:result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            $script:fallback = @($script:result.Entries | Where-Object Group -EQ 'Win-Fallback')
+        }
+
+        It 'lists the six tool files, sub-folders kept, sorted without regard to case' {
+            @($script:fallback.RelativePath) | Should -Be @(
+                'firmware\hp\8549\Bios Flash.htm'
+                'firmware\hp\8549\contents.txt'
+                'firmware\hp\8549\data\HpFirmwareUpdRec.cva'
+                'firmware\hp\8549\HpFirmwareUpdRec.txt'
+                'firmware\hp\8549\HpFirmwareUpdRec64.exe'
+                'firmware\hp\8549\R70_013600.bin'
+            )
+        }
+
+        It 'leaves out the SoftPaq self-extractor and the BIOS password file' {
+            $script:fallback.RelativePath | Should -Not -Contain 'firmware\hp\8549\sp174025.exe'
+            $script:fallback.RelativePath | Should -Not -Contain 'firmware\hp\8549\HPQPswd1.bin'
+            foreach ($entry in $script:result.Entries) {
+                $entry.SourcePath | Should -Not -BeLike '*sp174025.exe'
+                $entry.SourcePath | Should -Not -BeLike '*Pswd*'
+            }
+        }
+
+        It 'names the password file once in Notes and says it was left out' {
+            @($script:result.Notes) | Should -HaveCount 1
+            $script:result.Notes[0] | Should -BeLike '*HPQPswd1.bin*'
+            $script:result.Notes[0] | Should -BeLike 'Left out*'
+        }
+
+        It 'gives every file its source path, size, lower case SHA-256 and no vendor hash' {
+            foreach ($entry in $script:fallback) {
+                Test-Path -LiteralPath $entry.SourcePath -PathType Leaf | Should -BeTrue
+                $entry.Size | Should -Be ([IO.FileInfo]$entry.SourcePath).Length
+                $entry.Sha256 | Should -BeExactly (Get-FileHash -LiteralPath $entry.SourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                $entry.VendorHash | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'reads the sub-folder file from its place in the package' {
+            $cva = $script:fallback | Where-Object RelativePath -EQ 'firmware\hp\8549\data\HpFirmwareUpdRec.cva'
+            $cva.SourcePath | Should -Be (Join-Path $script:pkg.Folder 'data\HpFirmwareUpdRec.cva')
+        }
+
+        It 'keeps the BIOS and flash image entries as they were' {
+            $image = @($script:result.Entries | Where-Object Group -NE 'Win-Fallback')
+            $image | Should -HaveCount 6
+            foreach ($entry in $image) { $entry.SourcePath | Should -Be $script:pkg.Image }
         }
     }
 
@@ -233,7 +305,7 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             Copy-Item -LiteralPath $script:hpLayout -Destination $copy
             $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $pkg.PackagePath -LayoutPath $copy
             $result.LayoutPath | Should -Be $copy
-            @($result.Entries) | Should -HaveCount 6
+            @($result.Entries) | Should -HaveCount 12
         }
     }
 
@@ -323,7 +395,7 @@ Describe 'Get-HPKitFirmwareStickLayout' {
         It 'accepts a catalog SHA-384 written in either case' {
             $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384.ToLowerInvariant())
             $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
-            @($result.Entries) | Should -HaveCount 6
+            @($result.Entries) | Should -HaveCount 12
         }
 
         It 'changes nothing on disk' {
@@ -354,14 +426,31 @@ Describe 'Get-HPKitFirmwareStickLayout' {
 
             # The two Esc-DEVFW groups copy the image to the fixed name firmware.bin, so they would collide by design;
             # they are off by default (that folder holds one model only). Every BIOS image group keeps the shipped name.
-            $g5Bios = @($g5.Entries | Where-Object { $_.RelativePath -notlike '*\firmware.bin' })
-            $g6Bios = @($g6.Entries | Where-Object { $_.RelativePath -notlike '*\firmware.bin' })
+            $g5Bios = @($g5.Entries | Where-Object { $_.Group -ne 'Win-Fallback' -and $_.RelativePath -notlike '*\firmware.bin' })
+            $g6Bios = @($g6.Entries | Where-Object { $_.Group -ne 'Win-Fallback' -and $_.RelativePath -notlike '*\firmware.bin' })
             $g5Bios | Should -HaveCount 4
             $g6Bios | Should -HaveCount 4
             @($g5Bios.RelativePath | Where-Object { $g6Bios.RelativePath -contains $_ }) | Should -HaveCount 0
             foreach ($path in $g5Bios.RelativePath) { $path | Should -BeLike '*\Q78_013100.bin' }
             foreach ($path in $g6Bios.RelativePath) { $path | Should -BeLike '*\R70_013600.bin' }
             $g5Bios[0].Sha256 | Should -Not -Be $g6Bios[0].Sha256
+        }
+
+        It 'keep their Windows fallback files in separate platform folders' {
+            $g6Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin
+            $g5Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g5 -OsFolder win11-22H2 -SoftPaq sp157750 -Bin Q78_013100.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $g6Package.Sha384)
+            $g6 = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $g6Package.PackagePath
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.31.00' -Bin 'Q78_013100.bin' -Sha384 $g5Package.Sha384 -Date '2025-04-30')
+            $g5 = Get-HPKitFirmwareStickLayout -ModelProfile $script:g5 -PackagePath $g5Package.PackagePath -WarningAction SilentlyContinue
+
+            $g5Fallback = @($g5.Entries | Where-Object Group -EQ 'Win-Fallback')
+            $g6Fallback = @($g6.Entries | Where-Object Group -EQ 'Win-Fallback')
+            $g5Fallback | Should -HaveCount 6
+            $g6Fallback | Should -HaveCount 6
+            foreach ($path in $g5Fallback.RelativePath) { $path | Should -BeLike 'firmware\hp\83B2\*' }
+            foreach ($path in $g6Fallback.RelativePath) { $path | Should -BeLike 'firmware\hp\8549\*' }
+            @($g5Fallback.RelativePath | Where-Object { $g6Fallback.RelativePath -contains $_ }) | Should -HaveCount 0
         }
     }
 }

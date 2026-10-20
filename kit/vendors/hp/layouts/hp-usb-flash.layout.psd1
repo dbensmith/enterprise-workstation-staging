@@ -8,6 +8,9 @@
 # Diag-Tree capture. They are not BIOS image placements, so they have no group of their own.
 #
 # The two DEVFW groups stay off by default (Default = $false) because that name holds one model only.
+#
+# Win-Fallback holds the whole extracted flash-tool folder for the model, so the technician can run it from Windows
+# when the pre-Windows menu fails.
 @{
     SchemaVersion = 1
     VolumeLabel   = 'HP_TOOLS'
@@ -29,6 +32,8 @@
         @{ Id = 'Esc-DEVFW'; Folder = 'HP\DEVFW'; Source = 'FlashImage'; Closed = $true; Default = $false
             Verified = @{ Status = $false; Model = @(); Bios = ''; Date = ''; By = '' } }
         @{ Id = 'Esc-DEVFW-ESP'; Folder = 'EFI\HP\DEVFW'; Source = 'FlashImage'; Closed = $true; Default = $false
+            Verified = @{ Status = $false; Model = @(); Bios = ''; Date = ''; By = '' } }
+        @{ Id = 'Win-Fallback'; Folder = 'firmware\hp\{Platform}'; Source = 'WindowsFlashTool'; Closed = $true; Default = $true
             Verified = @{ Status = $false; Model = @(); Bios = ''; Date = ''; By = '' } }
     )
 }

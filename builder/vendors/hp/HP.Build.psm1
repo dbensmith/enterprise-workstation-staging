@@ -397,6 +397,53 @@ function Save-HPKitFirmware {
     }
 }
 
+function Get-HPKitWindowsFlashFile {
+    <#
+    .SYNOPSIS
+    List the files of an extracted SoftPaq folder that may be staged as the Windows flash fallback.
+
+    .DESCRIPTION
+    Private helper of Get-HPKitFirmwareStickLayout. Every file below the folder is listed with its path inside the
+    folder, sub-folders kept. The SoftPaq self-extractor <PackageId>.exe at the folder root is left out without a note
+    (it is not part of the tool). A BIOS password file (HPQPswd*.bin, password.bin) is left out with a note, because
+    such a file is generated from a password and must never travel on a stick. Files are sorted by path, ordinal and
+    case-insensitive.
+
+    .PARAMETER Directory
+    The extracted SoftPaq folder, the one that holds the BIOS image.
+
+    .PARAMETER PackageId
+    The SoftPaq id, for example sp174025.
+
+    .OUTPUTS
+    File (Relative, FullName, Length for each file) and Note (one sentence for each file left out).
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$PackageId
+    )
+
+    $root = (Resolve-Path -LiteralPath $Directory).ProviderPath.TrimEnd('\')
+    $file = [System.Collections.Generic.List[object]]::new()
+    $note = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -File -Force) {
+        $relative = $item.FullName.Substring($root.Length + 1)
+        if ($relative -eq "$PackageId.exe") { continue }
+        if ($item.Name -like '*Pswd*.bin' -or $item.Name -eq 'password.bin') {
+            $note.Add("Left out $($item.Name): BIOS password files are never staged.")
+            continue
+        }
+        $file.Add([pscustomobject]@{ Relative = $relative; FullName = $item.FullName; Length = [long]$item.Length })
+    }
+    $file.Sort([System.Comparison[object]] {
+            param($left, $right)
+            [string]::Compare($left.Relative, $right.Relative, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+    [pscustomobject]@{ File = $file.ToArray(); Note = $note.ToArray() }
+}
+
 function Get-HPKitFirmwareStickLayout {
     <#
     .SYNOPSIS
@@ -480,23 +527,38 @@ function Get-HPKitFirmwareStickLayout {
     }
     $sha256 = (Get-FileHash -LiteralPath $image.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 
-    $entries = foreach ($group in $layout.Groups) {
+    $entries = [System.Collections.Generic.List[object]]::new()
+    $notes = [System.Collections.Generic.List[string]]::new()
+    foreach ($group in $layout.Groups) {
         $folder = $group.Folder.Replace('{Platform}', $platformId)
-        $relativePath = switch ($group.SourceKind) {
-            'BiosImage' { "$folder\$bin" }
-            'FlashImage' { "$folder\firmware.bin" }
-            'Captured' { $null }
-            default { throw "Layout group $($group.Id) uses source kind $($group.SourceKind), which this vendor module cannot resolve." }
-        }
-        if ($relativePath) {
-            [pscustomobject]@{
-                RelativePath = $relativePath
-                SourcePath   = $image.FullName
-                Group        = $group.Id
-                Size         = $image.Length
-                Sha256       = $sha256
-                VendorHash   = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $vendorSha384; Source = 'Get-HPBIOSUpdates -All' }
+        switch ($group.SourceKind) {
+            { $_ -in 'BiosImage', 'FlashImage' } {
+                $leaf = if ($_ -eq 'BiosImage') { $bin } else { 'firmware.bin' }
+                $entries.Add([pscustomobject]@{
+                        RelativePath = "$folder\$leaf"
+                        SourcePath   = $image.FullName
+                        Group        = $group.Id
+                        Size         = $image.Length
+                        Sha256       = $sha256
+                        VendorHash   = [pscustomobject]@{ Algorithm = 'SHA384'; Value = $vendorSha384; Source = 'Get-HPBIOSUpdates -All' }
+                    })
             }
+            'WindowsFlashTool' {
+                $tool = Get-HPKitWindowsFlashFile -Directory $image.Directory.FullName -PackageId $image.Directory.Name
+                foreach ($each in $tool.File) {
+                    $entries.Add([pscustomobject]@{
+                            RelativePath = "$folder\$($each.Relative)"
+                            SourcePath   = $each.FullName
+                            Group        = $group.Id
+                            Size         = $each.Length
+                            Sha256       = (Get-FileHash -LiteralPath $each.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                            VendorHash   = $null
+                        })
+                }
+                foreach ($note in $tool.Note) { $notes.Add($note) }
+            }
+            'Captured' { }
+            default { throw "Layout group $($group.Id) uses source kind $($group.SourceKind), which this vendor module cannot resolve." }
         }
     }
 
@@ -519,8 +581,8 @@ function Get-HPKitFirmwareStickLayout {
             DependencyMinimum = ''
         }
         WindowsFlash     = $null
-        Entries          = @($entries)
-        Notes            = @()
+        Entries          = $entries.ToArray()
+        Notes            = $notes.ToArray()
     }
 }
 
