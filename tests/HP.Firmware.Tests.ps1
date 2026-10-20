@@ -10,7 +10,8 @@ BeforeAll {
     # judge as ours. Each command returns its bound parameters; the tests mock Get-HPBIOSUpdates.
     function Import-HPCMSLStandIn {
         $spec = [ordered]@{
-            'Get-HPBIOSUpdates' = 'param($Platform, [switch]$Latest, [switch]$All)'
+            'Get-HPBIOSUpdates'     = 'param($Platform, [switch]$Latest, [switch]$All)'
+            'Get-HPSoftpaqMetadata' = 'param($Number)'
         }
         $source = foreach ($name in $spec.Keys) {
             "function $name { $($spec[$name]); process { [pscustomobject]`$PSBoundParameters } }"
@@ -68,6 +69,24 @@ BeforeAll {
             [object]$Date = '2026-06-13'
         )
         [pscustomobject]@{ Ver = $Ver; Date = $Date; Bin = $Bin; Sha384 = $Sha384; RollbackAllowed = $true; Importance = 'Recommended'; Dependency = '' }
+    }
+
+    # The CVA of a SoftPaq as Get-HPSoftpaqMetadata returns it: the hash of the executable (upper case in the real CVA),
+    # the silent install command, the return codes and, when asked for, the Dependency section.
+    function Get-FakeCva {
+        [CmdletBinding()]
+        [OutputType([pscustomobject])]
+        param(
+            [AllowEmptyString()][string]$ExeSha256 = '',
+            [hashtable]$Dependency
+        )
+        $cva = [ordered]@{
+            Softpaq             = @{ SoftPaqSHA256 = $ExeSha256 }
+            'Install Execution' = @{ SilentInstall = '"HpFirmwareUpdRec.exe" -r -b -s' }
+            ReturnCode          = @{ '3010:SUCCESS:REBOOT' = 'A restart is required.'; '1602:CANCEL:NOREBOOT' = 'Flash failed due to dependency not satisfied.' }
+        }
+        if ($Dependency) { $cva['Dependency'] = $Dependency }
+        [pscustomobject]$cva
     }
 
     # The message a script block throws, or $null when it does not throw.
@@ -131,14 +150,17 @@ Describe 'Get-HPKitFirmwareStickLayout' {
     }
     BeforeEach {
         $script:catalog = @()
+        $script:metadata = @{}
         Mock Initialize-HPCMSL -ModuleName HP.Build {}
         Mock Get-HPBIOSUpdates -ModuleName HP.Build { $script:catalog }
+        Mock Get-HPSoftpaqMetadata -ModuleName HP.Build { $script:metadata["$Number"] }
         $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     }
 
     Context 'for the 840 G6' {
         BeforeEach {
             $script:pkg = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 }
             $latest = Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384
             $older = Get-FakeCatalogEntry -Ver '1.35.00' -Bin 'R70_013500.bin' -Sha384 ('A' * 96) -Date '2026-01-02'
             $script:catalog = @($latest, $older)
@@ -154,7 +176,7 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             $script:result.PlatformId | Should -Be '8549'
             $script:result.PlatformVerified | Should -BeTrue
             $script:result.BiosFamily | Should -Be 'R70'
-            $script:result.WindowsFlash | Should -BeNullOrEmpty
+            $script:result.WindowsFlash.Path | Should -Be 'firmware\hp\8549'
             @($script:result.Notes) | Should -HaveCount 0
             $script:result.LayoutPath | Should -Be $script:hpLayout
         }
@@ -206,6 +228,7 @@ Describe 'Get-HPKitFirmwareStickLayout' {
     Context 'the Windows flash fallback of the 840 G6' {
         BeforeEach {
             $script:pkg = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin -PasswordFile
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 }
             $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384)
             $script:result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
             $script:fallback = @($script:result.Entries | Where-Object Group -EQ 'Win-Fallback')
@@ -255,6 +278,122 @@ Describe 'Get-HPKitFirmwareStickLayout' {
             $image = @($script:result.Entries | Where-Object Group -NE 'Win-Fallback')
             $image | Should -HaveCount 6
             foreach ($entry in $image) { $entry.SourcePath | Should -Be $script:pkg.Image }
+        }
+    }
+
+    Context 'the CVA metadata of the 840 G6' {
+        BeforeEach {
+            $script:pkg = Write-FakeBiosPackage -Root $script:root -ModelId 840-g6 -OsFolder win11-24H2 -SoftPaq sp174025 -Bin R70_013600.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.36.00' -Bin 'R70_013600.bin' -Sha384 $script:pkg.Sha384)
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 -Dependency @{ MinimumBIOSVersion_R70 = '01.35.02' } }
+        }
+
+        It 'records how to run the Windows flash tool and what its return codes mean' {
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            $result.WindowsFlash.Path | Should -Be 'firmware\hp\8549'
+            $result.WindowsFlash.SilentInstall | Should -Be '"HpFirmwareUpdRec.exe" -r -b -s'
+            ($result.WindowsFlash.ReturnCodes -is [System.Collections.Specialized.OrderedDictionary]) | Should -BeTrue
+            @($result.WindowsFlash.ReturnCodes.Keys) | Should -Be @('1602', '3010')
+            $result.WindowsFlash.ReturnCodes['1602'] | Should -Be 'CANCEL'
+            $result.WindowsFlash.ReturnCodes['3010'] | Should -Be 'SUCCESS:REBOOT'
+        }
+
+        It 'asks for the metadata by the SoftPaq number without the sp prefix, once' {
+            $null = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            Should -Invoke Get-HPSoftpaqMetadata -ModuleName HP.Build -Exactly 1 -ParameterFilter { $Number -eq '174025' }
+        }
+
+        It 'records the BIOS the latest image needs first and adds no Note for it' {
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            $result.LatestBios.DependencyMinimum | Should -Be '01.35.02'
+            @($result.Notes) | Should -HaveCount 0
+        }
+
+        It 'leaves the dependency empty for a family the section does not name' {
+            $g5Package = Write-FakeBiosPackage -Root $script:root -ModelId 840-g5 -OsFolder win11-22H2 -SoftPaq sp157750 -Bin Q78_013100.bin
+            $script:catalog = @(Get-FakeCatalogEntry -Ver '1.31.00' -Bin 'Q78_013100.bin' -Sha384 $g5Package.Sha384 -Date '2025-04-30')
+            $script:metadata = @{ '157750' = Get-FakeCva -ExeSha256 $g5Package.ExeSha256 -Dependency @{ MinimumBIOSVersion_R70 = '01.35.02' } }
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g5 -PackagePath $g5Package.PackagePath -WarningAction SilentlyContinue
+            $result.LatestBios.DependencyMinimum | Should -BeNullOrEmpty
+        }
+
+        It 'leaves the dependency empty when the SoftPaq declares none' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 }
+            (Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath).LatestBios.DependencyMinimum | Should -BeNullOrEmpty
+        }
+
+        It 'formats a dependency written as 1.35.2 as 01.35.02' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 -Dependency @{ MinimumBIOSVersion_R70 = '1.35.2' } }
+            (Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath).LatestBios.DependencyMinimum | Should -Be '01.35.02'
+        }
+
+        It 'keeps a dependency that is not a version as text and adds a Note' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256 -Dependency @{ MinimumBIOSVersion_R70 = 'latest' } }
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            $result.LatestBios.DependencyMinimum | Should -Be 'latest'
+            @($result.Notes) | Should -HaveCount 1
+            $result.Notes[0] | Should -BeLike "*'latest'*"
+        }
+
+        It 'accepts the CVA hash of the SoftPaq executable in lower case' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 $script:pkg.ExeSha256.ToLowerInvariant() }
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            @($result.Notes) | Should -HaveCount 0
+        }
+
+        It 'throws, naming the executable, when its SHA-256 differs from the CVA' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 ('A' * 64) }
+            $message = Get-ThrownMessage -Action { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath }
+            $message | Should -BeLike '*sp174025.exe*'
+            $message | Should -BeLike '*does not match the HP CVA hash*'
+        }
+
+        It 'succeeds with a Note when the executable is not in the package' {
+            Remove-Item -LiteralPath $script:pkg.Exe
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            @($result.Notes) | Should -HaveCount 1
+            $result.Notes[0] | Should -BeLike '*sp174025.exe is not cached*not rechecked*'
+        }
+
+        It 'succeeds with a Note when HP published no SHA-256' {
+            $script:metadata = @{ '174025' = Get-FakeCva -ExeSha256 '' }
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            @($result.Notes) | Should -HaveCount 1
+            $result.Notes[0] | Should -BeLike '*published no SHA-256*sp174025.exe*'
+        }
+
+        It 'lets a failing metadata call stop the build' {
+            Mock Get-HPSoftpaqMetadata -ModuleName HP.Build { throw 'HP server unreachable' }
+            { Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath } | Should -Throw '*HP server unreachable*'
+        }
+
+        It 'has no WindowsFlash block when the layout stages no flash tool' {
+            $text = @'
+@{
+    SchemaVersion = 1
+    VolumeLabel   = 'HP_TOOLS'
+    FileSystem    = 'FAT32'
+    Groups        = @(
+        @{ Id = 'F10-New'; Folder = 'Hewlett-Packard\BIOS\New'; Source = 'BiosImage'; Closed = $true; Default = $true
+            Verified = @{ Status = $false; Model = @(); Bios = ''; Date = ''; By = '' } }
+    )
+}
+'@
+            $small = Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + '.layout.psd1')
+            [IO.File]::WriteAllText($small, $text, [Text.Encoding]::ASCII)
+            $result = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath -LayoutPath $small
+            $result.WindowsFlash | Should -BeNullOrEmpty
+            @($result.Entries) | Should -HaveCount 1
+        }
+
+        It 'changes nothing on disk' {
+            $snapshot = {
+                @(Get-ChildItem -LiteralPath $script:root -Recurse -Force -File | Sort-Object -Property FullName |
+                        ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })
+            }
+            $before = & $snapshot
+            $null = Get-HPKitFirmwareStickLayout -ModelProfile $script:g6 -PackagePath $script:pkg.PackagePath
+            & $snapshot | Should -Be $before
         }
     }
 

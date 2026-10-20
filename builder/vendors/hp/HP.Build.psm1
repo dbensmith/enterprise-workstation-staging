@@ -444,6 +444,53 @@ function Get-HPKitWindowsFlashFile {
     [pscustomobject]@{ File = $file.ToArray(); Note = $note.ToArray() }
 }
 
+function Get-HPKitDependencyMinimum {
+    <#
+    .SYNOPSIS
+    Read the BIOS a SoftPaq needs first from its CVA [Dependency] section.
+
+    .DESCRIPTION
+    Private helper of Get-HPKitFirmwareStickLayout. The key is MinimumBIOSVersion_<BiosFamily>. The version is written
+    two digits per part (1.35.2 becomes 01.35.02; a missing third part counts as 0). A value that is not a version is
+    kept as written and explained in Note. A SoftPaq with no Dependency section, or none for this family, gives an
+    empty Value.
+
+    .PARAMETER Dependency
+    The CVA Dependency section, or $null.
+
+    .PARAMETER BiosFamily
+    The BIOS family of the model, for example R70.
+
+    .OUTPUTS
+    Value (the minimum BIOS as text, or empty) and Note (a sentence, or empty).
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [AllowNull()][object]$Dependency,
+        [Parameter(Mandatory)][string]$BiosFamily
+    )
+
+    $key = "MinimumBIOSVersion_$BiosFamily"
+    $raw = $null
+    if ($Dependency -is [System.Collections.IDictionary]) {
+        if ($Dependency.Contains($key)) { $raw = $Dependency[$key] }
+    }
+    elseif ($null -ne $Dependency) {
+        $property = $Dependency.PSObject.Properties[$key]
+        if ($property) { $raw = $property.Value }
+    }
+    $text = ([string]$raw).Trim()
+    if (-not $text) { return [pscustomobject]@{ Value = ''; Note = '' } }
+
+    $parsed = $null
+    if ([version]::TryParse($text, [ref]$parsed)) {
+        $value = '{0:D2}.{1:D2}.{2:D2}' -f $parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build)
+        return [pscustomobject]@{ Value = $value; Note = '' }
+    }
+    [pscustomobject]@{ Value = $text; Note = "The BIOS dependency '$text' is not a version number; it is recorded as written." }
+}
+
 function Get-HPKitFirmwareStickLayout {
     <#
     .SYNOPSIS
@@ -458,7 +505,12 @@ function Get-HPKitFirmwareStickLayout {
     The result is the vendor contract Kit.FirmwareStickLayout: PlatformId, PlatformVerified, BiosFamily,
     LatestBios, Entries and Notes. One entry is produced per layout group that this module resolves: a
     BiosImage group gives the image under its folder, a FlashImage group gives a copy named firmware.bin,
-    a Captured group gives nothing (the core replays it from a recorded snapshot).
+    a WindowsFlashTool group gives every file of the extracted SoftPaq folder except the self-extractor and any BIOS
+    password file, a Captured group gives nothing (the core replays it from a recorded snapshot).
+
+    The SoftPaq metadata (Get-HPSoftpaqMetadata, the CVA) fills WindowsFlash (how to run the flash tool and what its
+    return codes mean) and LatestBios.DependencyMinimum (the BIOS the image needs first; it is recorded, never staged).
+    A SoftPaq executable whose SHA-256 differs from the CVA value stops the call, naming the file.
 
     .PARAMETER ModelProfile
     Model profile from Get-KitProfile.
@@ -529,6 +581,25 @@ function Get-HPKitFirmwareStickLayout {
 
     $entries = [System.Collections.Generic.List[object]]::new()
     $notes = [System.Collections.Generic.List[string]]::new()
+
+    # The CVA of the SoftPaq says how to run the flash tool, which BIOS the image needs first and what the executable
+    # must hash to. A metadata call that fails stops the build.
+    $packageId = $image.Directory.Name
+    $meta = Get-HPSoftpaqMetadata -Number ($packageId -replace '^sp', '')
+    $executable = Join-Path -Path $image.Directory.FullName -ChildPath "$packageId.exe"
+    $cvaSha256 = [string]$meta.Softpaq.SoftPaqSHA256
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        $notes.Add("$packageId.exe is not cached; its hash was not rechecked.")
+    }
+    elseif (-not $cvaSha256) {
+        $notes.Add("HP published no SHA-256 for $packageId.exe.")
+    }
+    elseif ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $cvaSha256.Trim()) {
+        throw "SoftPaq executable $packageId.exe does not match the HP CVA hash; delete $($image.Directory.FullName) and rebuild."
+    }
+    $dependency = Get-HPKitDependencyMinimum -Dependency $meta.Dependency -BiosFamily ([string]$ModelProfile.BiosFamily)
+    if ($dependency.Note) { $notes.Add($dependency.Note) }
+
     foreach ($group in $layout.Groups) {
         $folder = $group.Folder.Replace('{Platform}', $platformId)
         switch ($group.SourceKind) {
@@ -562,6 +633,22 @@ function Get-HPKitFirmwareStickLayout {
         }
     }
 
+    # How to run the Windows flash tool: only when the layout stages it. The return codes keep the CVA order (by code).
+    $windowsFlash = $null
+    $toolGroup = $layout.Groups | Where-Object SourceKind -EQ 'WindowsFlashTool' | Select-Object -First 1
+    if ($toolGroup) {
+        $returnCodes = [ordered]@{}
+        $codeMap = ConvertTo-ReturnCodeMap $meta.ReturnCode
+        foreach ($code in $codeMap.Keys) {
+            $returnCodes[[string]$code] = if ($codeMap[$code].Reboot) { "$($codeMap[$code].Result):REBOOT" } else { [string]$codeMap[$code].Result }
+        }
+        $windowsFlash = [pscustomobject]@{
+            Path          = $toolGroup.Folder.Replace('{Platform}', $platformId)
+            SilentInstall = [string]$meta.'Install Execution'.SilentInstall
+            ReturnCodes   = $returnCodes
+        }
+    }
+
     $date = if ($latest.Date -is [datetime]) { $latest.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) } else { [string]$latest.Date }
     [pscustomobject]@{
         PSTypeName       = 'Kit.FirmwareStickLayout'
@@ -578,9 +665,9 @@ function Get-HPKitFirmwareStickLayout {
             Date              = $date
             PackageId         = $image.Directory.Name
             File              = $bin
-            DependencyMinimum = ''
+            DependencyMinimum = $dependency.Value
         }
-        WindowsFlash     = $null
+        WindowsFlash     = $windowsFlash
         Entries          = $entries.ToArray()
         Notes            = $notes.ToArray()
     }
