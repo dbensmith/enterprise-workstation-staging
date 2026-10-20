@@ -75,6 +75,7 @@ function Get-FixtureKitModel { [CmdletBinding()] param() }
 function Save-FixtureKitVendorPack { [CmdletBinding()] param($ModelProfile, $OsVer, $OutputPath) }
 function New-FixtureKitCustomPack { [CmdletBinding()] param($ModelProfile, $OsVer) }
 function Save-FixtureKitFirmware { [CmdletBinding()] param($ModelProfile, $OsVer, $OutputPath) }
+function Get-FixtureKitFirmwareStickLayout { [CmdletBinding()] param($ModelProfile, $PackagePath, $LayoutPath) }
 Export-ModuleMember -Function *
 '@
         $path = Write-TestDescriptor -Folder $folder -BuildModule $module
@@ -129,7 +130,7 @@ Export-ModuleMember -Function *
         $path = Write-TestDescriptor -Folder (Join-Path $TestDrive 'empty-commands') -Commands @{}
         $first = @(Test-KitVendorContract -DescriptorPath $path)
         $second = @(Test-KitVendorContract -DescriptorPath $path)
-        $first | Should -HaveCount 8
+        $first | Should -HaveCount $script:contractOrder.Count
         @($first | ForEach-Object { $_.Kind } | Select-Object -Unique) | Should -Be @('MissingOperation')
         @($first | ForEach-Object { $_.Operation }) | Should -Be $script:contractOrder
         @($second | ForEach-Object { '{0}|{1}|{2}' -f $_.Operation, $_.Kind, $_.Detail }) |

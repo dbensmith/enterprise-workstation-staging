@@ -306,7 +306,7 @@ function Invoke-KitVendorCommand {
     param(
         [Parameter(Mandatory)][pscustomobject]$Vendor,
         [Parameter(Mandatory)]
-        [ValidateSet('ListModels', 'GetVendorPack', 'NewCustomPack', 'GetFirmware', 'InstallDrivers', 'InstallFirmware', 'GetDeviceIdentity', 'GetInstalledFirmwareVersion')]
+        [ValidateSet('ListModels', 'GetVendorPack', 'NewCustomPack', 'GetFirmware', 'GetFirmwareStickLayout', 'InstallDrivers', 'InstallFirmware', 'GetDeviceIdentity', 'GetInstalledFirmwareVersion')]
         [string]$Operation,
         [hashtable]$Parameters = @{}
     )
